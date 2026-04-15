@@ -132,7 +132,8 @@ function parsePlaceResponse(
   // Extract city/state from formattedAddress (best effort)
   const addressParts = p.formattedAddress?.split(",").map((s) => s.trim()) ?? [];
   const city = addressParts[addressParts.length - 3] ?? fallbackCity;
-  const state = addressParts[addressParts.length - 2]?.replace(/\s*-\s*\d+.*$/, "").trim() ?? fallbackState;
+  const state =
+    addressParts[addressParts.length - 2]?.replace(/\s*-\s*\d+.*$/, "").trim() ?? fallbackState;
 
   const photoUrl = p.photos?.[0]?.name
     ? `${PLACES_API_BASE}/${p.photos[0].name}/media?maxHeightPx=400&maxWidthPx=600&key=${process.env.GOOGLE_PLACES_API_KEY ?? ""}`

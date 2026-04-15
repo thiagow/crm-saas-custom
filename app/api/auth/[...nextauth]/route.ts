@@ -1,6 +1,6 @@
-import type { NextRequest } from "next/server";
 import { handlers } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/auth/rate-limit";
+import type { NextRequest } from "next/server";
 
 function getClientIp(req: NextRequest): string {
   return (

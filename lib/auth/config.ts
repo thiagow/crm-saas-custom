@@ -1,8 +1,8 @@
+import { accounts, authAuditLog, sessions, users, verificationTokens } from "@/db/schema";
+import { db } from "@/lib/db/client";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import type { NextAuthConfig } from "next-auth";
 import Resend from "next-auth/providers/resend";
-import { db } from "@/lib/db/client";
-import { accounts, authAuditLog, sessions, users, verificationTokens } from "@/db/schema";
 
 if (!process.env.RESEND_API_KEY) {
   throw new Error("RESEND_API_KEY environment variable is required");
