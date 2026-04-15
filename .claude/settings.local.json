@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --app --no-src-dir --import-alias \"@/*\" --yes --name crm-custom-saas)",
+      "Read(//c/Projetos/**)",
+      "Bash(npx create-next-app@latest crm-saas-temp --typescript --tailwind --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(cp -r \"c:/Projetos/crm-saas-temp/.\" \"c:/Projetos/Crm Custom SaaS/\")",
+      "Bash(rm -rf \"c:/Projetos/crm-saas-temp\")",
+      "Bash(npm install *)",
+      "Bash(npm show *)",
+      "Bash(npm audit *)"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-crm_dev}
+    ports:
+      - "5433:5432" # 5433 to avoid conflicts with local Postgres
+    volumes:
+      - crm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  crm_postgres_data:
+    name: crm_postgres_data
+    driver: local

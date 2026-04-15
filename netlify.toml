@@ -1,0 +1,28 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+  CI = "true"
+  SENTRY_SUPPRESS_INSTRUMENTATION_FILE_WARNING = "1"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Scheduled Functions (requires Netlify Pro / Business)
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Scheduled job worker — runs every minute
+[[functions.schedule]]
+  name = "job-worker"
+  cron = "* * * * *"
+
+# Headers (complementary to next.config.ts)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
