@@ -66,11 +66,13 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
     pageToken: undefined,
   });
 
-  // Store job reference
-  await db
-    .update(extractions)
-    .set({ jobId: jobId ?? undefined })
-    .where(eq(extractions.id, extraction.id));
+  // Store job reference (only if jobId was created)
+  if (jobId) {
+    await db
+      .update(extractions)
+      .set({ jobId })
+      .where(eq(extractions.id, extraction.id));
+  }
 
   revalidatePath(`/${data.projectSlug}/extractions`);
   return extraction;
@@ -93,6 +95,36 @@ export async function getExtractions(projectSlug: string) {
     orderBy: [desc(extractions.createdAt)],
     limit: 50,
   });
+}
+
+export async function cancelExtraction(extractionId: string, projectSlug: string) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales");
+
+  const extraction = await db.query.extractions.findFirst({
+    where: and(eq(extractions.id, extractionId), eq(extractions.projectId, project.id)),
+    columns: { id: true, status: true },
+  });
+
+  if (!extraction) throw new Error("Extraction not found");
+  if (extraction.status !== "queued" && extraction.status !== "running") {
+    throw new Error("Only active extractions can be cancelled");
+  }
+
+  await db
+    .update(extractions)
+    .set({ status: "cancelled" })
+    .where(eq(extractions.id, extractionId));
+
+  revalidatePath(`/${projectSlug}/extractions`);
 }
 
 export async function getExtractionStatus(extractionId: string, projectSlug: string) {

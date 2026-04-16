@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
-import { eq } from "drizzle-orm";
-import { projects, pipelineStages, projectMembers } from "@/db/schema";
+import { and, eq, notInArray } from "drizzle-orm";
+import { projects, pipelineStages, projectMembers, users } from "@/db/schema";
 import { requireRole } from "@/lib/auth/rbac";
 import { SettingsForm } from "@/components/settings/settings-form";
 
@@ -29,7 +29,6 @@ export default async function SettingsPage({ params }: Props) {
   try {
     await requireRole(session.user.id, project.id, "admin");
   } catch {
-    // viewer/sales roles can't access settings
     redirect(`/${projectSlug}/kanban`);
   }
 
@@ -43,6 +42,26 @@ export default async function SettingsPage({ params }: Props) {
     with: { user: { columns: { id: true, name: true, email: true } } },
   });
 
+  // Users who are active but not already members — available to add
+  const existingMemberUserIds = members.map((m) => m.user.id);
+  const availableUsers =
+    existingMemberUserIds.length > 0
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(
+            and(
+              eq(users.isActive, true),
+              notInArray(users.id, existingMemberUserIds),
+            ),
+          )
+          .orderBy(users.email)
+      : await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.isActive, true))
+          .orderBy(users.email);
+
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
       <div className="mb-8">
@@ -52,7 +71,12 @@ export default async function SettingsPage({ params }: Props) {
         </p>
       </div>
 
-      <SettingsForm project={project} stages={stages} members={members} />
+      <SettingsForm
+        project={project}
+        stages={stages}
+        members={members}
+        availableUsers={availableUsers}
+      />
     </div>
   );
 }

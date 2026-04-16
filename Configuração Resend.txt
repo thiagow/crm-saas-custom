@@ -1,0 +1,6 @@
+Opção B — Domínio próprio (recomendado para produção):
+  1. No dashboard, vá em Domains → Add Domain
+  2. Digite seu domínio (ex: seudominio.com)
+  3. Adicione os registros DNS que o Resend mostrar (SPF, DKIM, DMARC)
+  4. Aguarde a verificação (geralmente ~5 min)
+  5. Depois use como from: noreply@seudominio.com

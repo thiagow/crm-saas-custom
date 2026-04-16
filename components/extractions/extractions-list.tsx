@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import Link from "next/link";
-import { getExtractionStatus } from "@/lib/extractions/actions";
+import { toast } from "sonner";
+import { getExtractionStatus, cancelExtraction } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
 import type { extractions } from "@/db/schema";
 
@@ -26,6 +28,7 @@ function ExtractionRow({
   projectSlug: string;
 }) {
   const [status, setStatus] = useState(extraction);
+  const [isPending, startTransition] = useTransition();
   const isActive = status.status === "queued" || status.status === "running";
 
   // Poll for status updates on active extractions
@@ -42,6 +45,18 @@ function ExtractionRow({
     }, 5000);
     return () => clearInterval(interval);
   }, [extraction.id, projectSlug, isActive]);
+
+  function handleCancel() {
+    startTransition(async () => {
+      try {
+        await cancelExtraction(status.id, projectSlug);
+        setStatus((prev) => ({ ...prev, status: "cancelled" }));
+        toast.success("Extração cancelada");
+      } catch {
+        toast.error("Não foi possível cancelar a extração");
+      }
+    });
+  }
 
   const config = STATUS_CONFIG[status.status];
 
@@ -68,6 +83,16 @@ function ExtractionRow({
             Ver triagem →
           </Link>
         )}
+        {isActive && (
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={isPending}
+            className="text-xs text-zinc-500 hover:text-red-400 transition-colors disabled:opacity-40"
+          >
+            {isPending ? "Cancelando…" : "Cancelar"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -80,6 +105,15 @@ export function ExtractionsList({
   extractions: Extraction[];
   projectSlug: string;
 }) {
+  const router = useRouter();
+  const [isRefreshing, startRefresh] = useTransition();
+
+  function handleRefresh() {
+    startRefresh(() => {
+      router.refresh();
+    });
+  }
+
   if (extractions.length === 0) {
     return (
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-12 text-center">
@@ -92,10 +126,35 @@ export function ExtractionsList({
   }
 
   return (
-    <div className="space-y-2">
-      {extractions.map((extraction) => (
-        <ExtractionRow key={extraction.id} extraction={extraction} projectSlug={projectSlug} />
-      ))}
+    <div>
+      <div className="flex justify-end mb-3">
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-40"
+        >
+          <svg
+            className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+          {isRefreshing ? "Atualizando…" : "Atualizar"}
+        </button>
+      </div>
+      <div className="space-y-2">
+        {extractions.map((extraction) => (
+          <ExtractionRow key={extraction.id} extraction={extraction} projectSlug={projectSlug} />
+        ))}
+      </div>
     </div>
   );
 }

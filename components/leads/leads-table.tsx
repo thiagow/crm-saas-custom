@@ -4,6 +4,7 @@ import { useState, useRef, useTransition } from "react";
 import Papa from "papaparse";
 import { toast } from "sonner";
 import { importLeadsFromCsv } from "@/lib/leads/csv-import";
+import { createLead } from "@/lib/leads/actions";
 import { cn } from "@/lib/utils";
 import type { leads, pipelineStages } from "@/db/schema";
 
@@ -36,6 +37,20 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
   });
   const [targetStageId, setTargetStageId] = useState(stages[0]?.id ?? "");
   const [showCsvModal, setShowCsvModal] = useState(false);
+
+  // New lead modal state
+  const [showNewLeadModal, setShowNewLeadModal] = useState(false);
+  const [newLeadForm, setNewLeadForm] = useState({
+    name: "",
+    company: "",
+    phone: "",
+    email: "",
+    city: "",
+    state: "",
+    instagramHandle: "",
+    value: "",
+  });
+
   const [, startTransition] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -93,6 +108,56 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
     });
   }
 
+  function downloadTemplate() {
+    const headers = ["Nome", "Empresa", "Telefone", "Email", "Cidade", "Estado", "Instagram"];
+    const example = ["João Silva", "Academia Fight Club", "(11) 99999-0000", "joao@academia.com", "São Paulo", "SP", "@joao.silva"];
+    const csv = [headers.join(","), example.join(",")].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "template-leads.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCreateLead() {
+    startTransition(async () => {
+      try {
+        if (!newLeadForm.name.trim()) {
+          toast.error("Nome é obrigatório");
+          return;
+        }
+        await createLead({
+          projectSlug,
+          stageId: targetStageId,
+          name: newLeadForm.name,
+          company: newLeadForm.company || undefined,
+          phone: newLeadForm.phone || undefined,
+          email: newLeadForm.email || undefined,
+          city: newLeadForm.city || undefined,
+          state: newLeadForm.state || undefined,
+          instagramHandle: newLeadForm.instagramHandle || undefined,
+          value: newLeadForm.value ? parseFloat(newLeadForm.value) : undefined,
+        });
+        toast.success("Lead criado");
+        setShowNewLeadModal(false);
+        setNewLeadForm({
+          name: "",
+          company: "",
+          phone: "",
+          email: "",
+          city: "",
+          state: "",
+          instagramHandle: "",
+          value: "",
+        });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao criar lead");
+      }
+    });
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -113,6 +178,26 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
               e.target.value = "";
             }}
           />
+          <button
+            type="button"
+            onClick={() => setShowNewLeadModal(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+            </svg>
+            Novo lead
+          </button>
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V3" />
+            </svg>
+            Template CSV
+          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -270,6 +355,78 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                 className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Importar {csvRows.length} leads
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* New lead modal */}
+      {showNewLeadModal && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setShowNewLeadModal(false)} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <h2 className="text-base font-semibold text-zinc-100 mb-4">Novo lead</h2>
+
+            <div className="space-y-3 mb-6">
+              {[
+                { key: "name", label: "Nome*", type: "text" },
+                { key: "company", label: "Empresa", type: "text" },
+                { key: "phone", label: "Telefone", type: "tel" },
+                { key: "email", label: "Email", type: "email" },
+                { key: "city", label: "Cidade", type: "text" },
+                { key: "state", label: "Estado (UF)", type: "text" },
+                { key: "instagramHandle", label: "Instagram", type: "text" },
+                { key: "value", label: "Valor (R$)", type: "number" },
+              ].map(({ key, label, type }) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    {label}
+                  </label>
+                  <input
+                    type={type}
+                    placeholder={label}
+                    value={newLeadForm[key as keyof typeof newLeadForm]}
+                    onChange={(e) =>
+                      setNewLeadForm((prev) => ({ ...prev, [key]: e.target.value }))
+                    }
+                    className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              ))}
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                  Estágio
+                </label>
+                <select
+                  value={targetStageId}
+                  onChange={(e) => setTargetStageId(e.target.value)}
+                  className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {stages.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowNewLeadModal(false)}
+                className="flex-1 rounded-lg border border-zinc-800 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateLead}
+                className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Criar lead
               </button>
             </div>
           </div>

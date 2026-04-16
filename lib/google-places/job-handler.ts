@@ -76,13 +76,19 @@ export async function processExtractionPage(data: ExtractionStartJobData): Promi
 
   const newPlaces = places.filter((p) => !existingPlaceIds.has(p.id));
 
-  // Enrich Instagram handles for new places
-  const enriched = await Promise.allSettled(
-    newPlaces.map(async (place) => {
-      const { handle, source } = await findInstagramHandle(place);
-      return { place, instagramHandle: handle, instagramSource: source };
-    }),
-  );
+  // Enrich Instagram handles for new places (batched to limit concurrent connections)
+  const BATCH_SIZE = 5;
+  const enriched: PromiseSettledResult<{ place: typeof newPlaces[number]; instagramHandle: string | undefined; instagramSource: string | undefined }>[] = [];
+  for (let i = 0; i < newPlaces.length; i += BATCH_SIZE) {
+    const batch = newPlaces.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (place) => {
+        const { handle, source } = await findInstagramHandle(place);
+        return { place, instagramHandle: handle, instagramSource: source };
+      }),
+    );
+    enriched.push(...batchResults);
+  }
 
   // Persist results
   if (enriched.length > 0) {

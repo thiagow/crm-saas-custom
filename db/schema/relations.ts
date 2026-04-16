@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import { accounts, authAuditLog, sessions, users } from "./auth";
 import { extractionResults, extractions } from "./extractions";
+import { invites } from "./invites";
 import { activities, leads } from "./leads";
 import { pipelineStages } from "./pipeline";
 import { projectMembers, projects } from "./projects";
@@ -11,6 +12,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   projectMemberships: many(projectMembers),
   auditLogs: many(authAuditLog),
+  sentInvites: many(invites, { relationName: "invitedBy" }),
 }));
 
 export const accountsRelations = relations(accounts, ({ one }) => ({
@@ -23,6 +25,16 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
 
 export const authAuditLogRelations = relations(authAuditLog, ({ one }) => ({
   user: one(users, { fields: [authAuditLog.userId], references: [users.id] }),
+}));
+
+// Invite relations
+export const invitesRelations = relations(invites, ({ one }) => ({
+  invitedBy: one(users, {
+    fields: [invites.invitedById],
+    references: [users.id],
+    relationName: "invitedBy",
+  }),
+  project: one(projects, { fields: [invites.projectId], references: [projects.id] }),
 }));
 
 // Project relations

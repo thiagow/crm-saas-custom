@@ -1,11 +1,12 @@
 import { signIn } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { checkEmailAccess } from "@/lib/users/actions";
+import { redirect } from "next/navigation";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string; email?: string }>;
 }) {
   const session = await auth();
   if (session?.user) redirect("/");
@@ -13,6 +14,7 @@ export default async function LoginPage({
   const params = await searchParams;
   const callbackUrl = params.callbackUrl ?? "/";
   const error = params.error;
+  const prefilledEmail = params.email ?? "";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center px-4">
@@ -42,9 +44,11 @@ export default async function LoginPage({
         {error && (
           <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
             <p className="text-sm text-red-400">
-              {error === "EmailCreateAccount"
-                ? "Não foi possível criar a conta. Tente novamente."
-                : "Algo deu errado. Tente novamente."}
+              {error === "Unauthorized"
+                ? "Acesso não autorizado. Entre em contato com o administrador."
+                : error === "EmailCreateAccount"
+                  ? "Não foi possível criar a conta. Tente novamente."
+                  : "Algo deu errado. Tente novamente."}
             </p>
           </div>
         )}
@@ -55,6 +59,13 @@ export default async function LoginPage({
           action={async (formData: FormData) => {
             "use server";
             const email = formData.get("email") as string;
+
+            // DB-based access check (users + invites)
+            const allowed = await checkEmailAccess(email);
+            if (!allowed) {
+              redirect("/login?error=Unauthorized");
+            }
+
             await signIn("resend", { email, redirectTo: callbackUrl });
           }}
         >
@@ -69,6 +80,7 @@ export default async function LoginPage({
               required
               autoComplete="email"
               autoFocus
+              defaultValue={prefilledEmail}
               placeholder="seu@email.com"
               className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
             />

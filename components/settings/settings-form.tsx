@@ -1,6 +1,7 @@
 "use client";
 
 import { archiveProject } from "@/lib/projects/actions";
+import { addProjectMember, removeProjectMember, updateMemberRole } from "@/lib/projects/member-actions";
 import {
   addPipelineStage,
   deletePipelineStage,
@@ -15,6 +16,7 @@ import {
   PencilIcon,
   PlusIcon,
   Trash2Icon,
+  UserPlusIcon,
   XIcon,
 } from "lucide-react";
 import { useState, useTransition } from "react";
@@ -27,10 +29,25 @@ interface Stage {
   color: string;
 }
 
+type ProjectRole = "owner" | "admin" | "sales" | "viewer";
+
+const ROLE_LABELS: Record<ProjectRole, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  sales: "Vendas",
+  viewer: "Visualizador",
+};
+
 interface Member {
   id: string;
   role: string;
   user: { id: string; name: string | null; email: string | null };
+}
+
+interface AvailableUser {
+  id: string;
+  name: string | null;
+  email: string;
 }
 
 interface Project {
@@ -45,13 +62,23 @@ interface Props {
   project: Project;
   stages: Stage[];
   members: Member[];
+  availableUsers: AvailableUser[];
 }
 
-export function SettingsForm({ project, stages: initialStages, members }: Props) {
+export function SettingsForm({ project, stages: initialStages, members: initialMembers, availableUsers }: Props) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
   const [archiveConfirm, setArchiveConfirm] = useState(false);
   const [stages, setStages] = useState<Stage[]>(initialStages);
+  const [members, setMembers] = useState<Member[]>(initialMembers);
+
+  // Add member form state
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addUserId, setAddUserId] = useState("");
+  const [addMemberRole, setAddMemberRole] = useState<ProjectRole>("sales");
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingMemberRole, setEditingMemberRole] = useState<ProjectRole>("sales");
 
   // Stage editing state
   const [editingStageId, setEditingStageId] = useState<string | null>(null);
@@ -158,6 +185,64 @@ export function SettingsForm({ project, stages: initialStages, members }: Props)
         // Revert on failure
         setStages(stages);
         toast.error(err instanceof Error ? err.message : "Erro ao reordenar");
+      }
+    });
+  }
+
+  function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addUserId) return;
+    startTransition(async () => {
+      try {
+        await addProjectMember({ projectId: project.id, userId: addUserId, role: addMemberRole });
+        const user = availableUsers.find((u) => u.id === addUserId);
+        if (user) {
+          setMembers((prev) => [
+            ...prev,
+            { id: crypto.randomUUID(), role: addMemberRole, user: { id: user.id, name: user.name, email: user.email } },
+          ]);
+        }
+        setShowAddMember(false);
+        setAddUserId("");
+        setAddMemberRole("sales");
+        toast.success("Membro adicionado.");
+        window.location.reload();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao adicionar membro");
+      }
+    });
+  }
+
+  function handleRemoveMember(memberId: string) {
+    startTransition(async () => {
+      try {
+        await removeProjectMember({ memberId, projectId: project.id });
+        setMembers((prev) => prev.filter((m) => m.id !== memberId));
+        setRemovingMemberId(null);
+        toast.success("Membro removido.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao remover membro");
+        setRemovingMemberId(null);
+      }
+    });
+  }
+
+  function startEditMemberRole(member: Member) {
+    setEditingMemberId(member.id);
+    setEditingMemberRole(member.role as ProjectRole);
+  }
+
+  function handleSaveMemberRole(memberId: string) {
+    startTransition(async () => {
+      try {
+        await updateMemberRole({ memberId, projectId: project.id, role: editingMemberRole });
+        setMembers((prev) =>
+          prev.map((m) => (m.id === memberId ? { ...m, role: editingMemberRole } : m)),
+        );
+        setEditingMemberId(null);
+        toast.success("Papel atualizado.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao atualizar papel");
       }
     });
   }
@@ -401,26 +486,171 @@ export function SettingsForm({ project, stages: initialStages, members }: Props)
 
       {/* Members */}
       <section className="rounded-xl border border-zinc-800 bg-zinc-950 p-6">
-        <h2 className="text-sm font-semibold text-zinc-300 mb-4">Membros</h2>
-        <div className="space-y-2">
-          {members.map((member) => (
-            <div
-              key={member.id}
-              className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5"
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-zinc-300">Membros</h2>
+          {!showAddMember && availableUsers.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAddMember(true)}
+              className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
             >
-              <div>
-                <p className="text-sm text-zinc-200">
-                  {member.user.name ?? member.user.email ?? "—"}
-                </p>
-                {member.user.name && <p className="text-xs text-zinc-500">{member.user.email}</p>}
-              </div>
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 capitalize">
-                {member.role}
-              </span>
+              <UserPlusIcon className="h-3.5 w-3.5" />
+              Adicionar
+            </button>
+          )}
+        </div>
+
+        {/* Add member form */}
+        {showAddMember && (
+          <form
+            onSubmit={handleAddMember}
+            className="mb-3 rounded-lg border border-dashed border-zinc-700 bg-zinc-900 p-4 space-y-3"
+          >
+            <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+              Adicionar membro existente
+            </h3>
+            <div className="flex gap-2">
+              <select
+                value={addUserId}
+                onChange={(e) => setAddUserId(e.target.value)}
+                required
+                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+              >
+                <option value="">Selecione um usuário…</option>
+                {availableUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name ? `${u.name} (${u.email})` : u.email}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={addMemberRole}
+                onChange={(e) => setAddMemberRole(e.target.value as ProjectRole)}
+                className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+              >
+                {(Object.keys(ROLE_LABELS) as ProjectRole[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 transition-colors"
+              >
+                Adicionar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddMember(false);
+                  setAddUserId("");
+                }}
+                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className="space-y-1.5">
+          {members.map((member) => (
+            <div key={member.id}>
+              {removingMemberId === member.id ? (
+                <div className="flex items-center justify-between rounded-lg border border-red-900/60 bg-red-950/20 px-3 py-2">
+                  <span className="text-sm text-zinc-400">
+                    Remover &ldquo;{member.user.name ?? member.user.email}&rdquo;?
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMember(member.id)}
+                      className="rounded bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-500 transition-colors"
+                    >
+                      Remover
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemovingMemberId(null)}
+                      className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : editingMemberId === member.id ? (
+                <div className="flex items-center gap-2 rounded-lg border border-indigo-700/60 bg-zinc-900 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-zinc-200 truncate">
+                      {member.user.name ?? member.user.email ?? "—"}
+                    </p>
+                  </div>
+                  <select
+                    value={editingMemberRole}
+                    onChange={(e) => setEditingMemberRole(e.target.value as ProjectRole)}
+                    className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300 focus:outline-none"
+                  >
+                    {(Object.keys(ROLE_LABELS) as ProjectRole[]).map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r]}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveMemberRole(member.id)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-green-500 hover:bg-zinc-800 transition-colors"
+                  >
+                    <CheckIcon className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingMemberId(null)}
+                    className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 transition-colors"
+                  >
+                    <XIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="group flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-zinc-200 truncate">
+                      {member.user.name ?? member.user.email ?? "—"}
+                    </p>
+                    {member.user.name && (
+                      <p className="text-xs text-zinc-500 truncate">{member.user.email}</p>
+                    )}
+                  </div>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-400 capitalize flex-shrink-0">
+                    {ROLE_LABELS[member.role as ProjectRole] ?? member.role}
+                  </span>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => startEditMemberRole(member)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-zinc-400 transition-colors"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRemovingMemberId(member.id)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-red-400 transition-colors"
+                    >
+                      <Trash2Icon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
+          {members.length === 0 && (
+            <p className="text-sm text-zinc-600 py-2">Nenhum membro neste projeto ainda.</p>
+          )}
         </div>
-        <p className="mt-3 text-xs text-zinc-600">Convite de membros estará disponível em breve.</p>
       </section>
 
       {/* Danger zone */}

@@ -12,7 +12,7 @@ type Project = typeof projects.$inferSelect;
 interface AppShellProps {
   children: ReactNode;
   projects: Project[];
-  user: User;
+  user: User & { isOwner?: boolean };
 }
 
 export function AppShell({ children, projects, user }: AppShellProps) {
@@ -90,7 +90,7 @@ export function AppShell({ children, projects, user }: AppShellProps) {
           </nav>
         </div>
 
-        {/* Bottom: user + new project */}
+        {/* Bottom: settings + new project + user */}
         <div className="border-t border-zinc-800 p-2 space-y-0.5">
           <Link
             href="/projects/new"
@@ -105,6 +105,46 @@ export function AppShell({ children, projects, user }: AppShellProps) {
             </svg>
             {sidebarOpen && <span>Novo projeto</span>}
           </Link>
+
+          {/* Users (owner only) */}
+          {user.isOwner && (
+            <Link
+              href="/settings/users"
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
+                pathname.startsWith("/settings/users")
+                  ? "bg-zinc-800 text-zinc-200"
+                  : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
+                !sidebarOpen && "justify-center",
+              )}
+              title={!sidebarOpen ? "Usuários" : undefined}
+            >
+              <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              {sidebarOpen && <span>Usuários</span>}
+            </Link>
+          )}
+
+          {/* Security */}
+          <Link
+            href="/settings/security"
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
+              pathname.startsWith("/settings/security")
+                ? "bg-zinc-800 text-zinc-200"
+                : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300",
+              !sidebarOpen && "justify-center",
+            )}
+            title={!sidebarOpen ? "Segurança" : undefined}
+          >
+            <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            {sidebarOpen && <span>Segurança</span>}
+          </Link>
+
+          {/* User identity */}
           {sidebarOpen && (
             <div className="flex items-center gap-2 px-2 py-1.5">
               <div className="h-6 w-6 flex-shrink-0 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px] font-bold text-indigo-400">

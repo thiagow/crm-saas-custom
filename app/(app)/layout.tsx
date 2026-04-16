@@ -13,5 +13,8 @@ export default async function AppLayout({
 
   const projects = await getProjects();
 
-  return <AppShell projects={projects} user={session.user}>{children}</AppShell>;
+  // isOwner is set in the session callback from the JWT token
+  const user = session.user as typeof session.user & { isOwner?: boolean };
+
+  return <AppShell projects={projects} user={user}>{children}</AppShell>;
 }

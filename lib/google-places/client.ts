@@ -103,6 +103,7 @@ export async function searchPlaces(params: {
       ].join(","),
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {

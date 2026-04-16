@@ -4,6 +4,9 @@ export * from "./auth";
 // Projects & RBAC
 export * from "./projects";
 
+// Invites
+export * from "./invites";
+
 // Pipeline
 export * from "./pipeline";
 

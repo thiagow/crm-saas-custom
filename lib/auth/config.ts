@@ -1,6 +1,7 @@
-import { accounts, authAuditLog, sessions, users, verificationTokens } from "@/db/schema";
+import { accounts, authAuditLog, invites, projectMembers, sessions, users, verificationTokens } from "@/db/schema";
 import { db } from "@/lib/db/client";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import type { NextAuthConfig } from "next-auth";
 import Resend from "next-auth/providers/resend";
 
@@ -32,10 +33,38 @@ export const authConfig: NextAuthConfig = {
   ],
   pages: {
     signIn: "/login",
-    verifyRequest: "/verify",
     error: "/login",
   },
   callbacks: {
+    async signIn({ user }) {
+      if (!user.email) return false;
+
+      // Owner bypass
+      if (process.env.OWNER_EMAIL && user.email === process.env.OWNER_EMAIL) {
+        return true;
+      }
+
+      const now = new Date();
+
+      // 1. User already exists in the system → check isActive
+      const existingUser = await db.query.users.findFirst({
+        where: eq(users.email, user.email),
+        columns: { isActive: true },
+      });
+      if (existingUser) return existingUser.isActive;
+
+      // 2. No existing user → must have a valid, non-expired invite
+      const invite = await db.query.invites.findFirst({
+        where: and(
+          eq(invites.email, user.email),
+          isNull(invites.acceptedAt),
+          gt(invites.expiresAt, now),
+        ),
+        columns: { id: true },
+      });
+
+      return !!invite;
+    },
     jwt({ token, user }) {
       if (user) {
         token.id = user.id;
@@ -56,11 +85,52 @@ export const authConfig: NextAuthConfig = {
   events: {
     async signIn({ user }) {
       if (!user.id || !user.email) return;
+
+      const now = new Date();
+
+      // Auto-set isOwner flag for the designated owner email
+      if (process.env.OWNER_EMAIL && user.email === process.env.OWNER_EMAIL) {
+        await db.update(users).set({ isOwner: true }).where(eq(users.id, user.id));
+      }
+
+      // Accept any pending invite for this user and add them to the project
+      const invite = await db.query.invites.findFirst({
+        where: and(
+          eq(invites.email, user.email),
+          isNull(invites.acceptedAt),
+          gt(invites.expiresAt, now),
+        ),
+        columns: { id: true, projectId: true, role: true },
+      });
+
+      if (invite) {
+        await db
+          .update(invites)
+          .set({ acceptedAt: now })
+          .where(eq(invites.id, invite.id));
+
+        if (invite.projectId) {
+          const alreadyMember = await db.query.projectMembers.findFirst({
+            where: and(
+              eq(projectMembers.userId, user.id),
+              eq(projectMembers.projectId, invite.projectId),
+            ),
+            columns: { id: true },
+          });
+          if (!alreadyMember) {
+            await db.insert(projectMembers).values({
+              userId: user.id,
+              projectId: invite.projectId,
+              role: invite.role,
+            });
+          }
+        }
+      }
+
       await db.insert(authAuditLog).values({
         userId: user.id,
         email: user.email,
         event: "login_success",
-        // IP/userAgent not available in the event callback — captured at the route level if needed
       });
     },
   },

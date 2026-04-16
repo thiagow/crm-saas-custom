@@ -99,6 +99,13 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
     });
   }
 
+  function handleLeadCreated(stageId: string, lead: Lead) {
+    setLeadsMap((prev) => ({
+      ...prev,
+      [stageId]: [...(prev[stageId] ?? []), lead],
+    }));
+  }
+
   return (
     <>
       <div className="flex h-full gap-3 overflow-x-auto p-4">
@@ -109,7 +116,9 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
                 key={stage.id}
                 stage={stage}
                 leads={leadsMap[stage.id] ?? []}
+                projectSlug={projectSlug}
                 onLeadClick={setSelectedLead}
+                onLeadCreated={(lead) => handleLeadCreated(stage.id, lead)}
               />
             ))}
           </SortableContext>

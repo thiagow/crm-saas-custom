@@ -155,3 +155,66 @@ export async function getLeadDetails(leadId: string, projectSlug: string) {
   if (!lead) throw new Error("Lead not found");
   return lead;
 }
+
+const createLeadSchema = z.object({
+  projectSlug: z.string(),
+  stageId: z.string(),
+  name: z.string().min(1).max(200),
+  company: z.string().max(200).optional(),
+  phone: z.string().max(50).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  website: z.string().url().optional().or(z.literal("")),
+  instagramHandle: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  state: z.string().max(50).optional(),
+  value: z.number().positive().optional(),
+});
+
+export async function createLead(input: z.infer<typeof createLeadSchema>) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const data = createLeadSchema.parse(input);
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, data.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales");
+
+  // Validate stage exists in project
+  const stage = await db.query.pipelineStages.findFirst({
+    where: and(eq(pipelineStages.id, data.stageId), eq(pipelineStages.projectId, project.id)),
+    columns: { id: true },
+  });
+  if (!stage) throw new Error("Stage not found");
+
+  const [lead] = await db
+    .insert(leads)
+    .values({
+      projectId: project.id,
+      stageId: data.stageId,
+      name: data.name,
+      company: data.company,
+      phone: data.phone,
+      email: data.email,
+      website: data.website,
+      instagramHandle: data.instagramHandle,
+      city: data.city,
+      state: data.state,
+      source: "manual" as const,
+      value: data.value,
+      tags: [],
+      customFields: {},
+    })
+    .returning();
+
+  if (!lead) throw new Error("Failed to create lead");
+
+  revalidatePath(`/${data.projectSlug}/kanban`);
+  revalidatePath(`/${data.projectSlug}/leads`);
+
+  return lead;
+}
