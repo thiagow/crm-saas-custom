@@ -61,18 +61,28 @@ export async function addPipelineStage(input: z.infer<typeof addStageSchema>) {
   });
   const nextOrder = existing.length > 0 ? Math.max(...existing.map((s) => s.order)) + 1 : 0;
 
-  await db.insert(pipelineStages).values({
-    projectId: data.projectId,
-    name: data.name,
-    color: data.color,
-    order: nextOrder,
-  });
+  const [newStage] = await db
+    .insert(pipelineStages)
+    .values({
+      projectId: data.projectId,
+      name: data.name,
+      color: data.color,
+      order: nextOrder,
+    })
+    .returning();
 
   const project = await db.query.projects.findFirst({
     where: eq(projects.id, data.projectId),
     columns: { slug: true },
   });
   if (project) revalidatePath(`/${project.slug}/settings`);
+
+  return {
+    id: newStage!.id,
+    name: newStage!.name,
+    color: newStage!.color,
+    order: newStage!.order,
+  };
 }
 
 const updateStageSchema = z.object({

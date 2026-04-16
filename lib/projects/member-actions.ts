@@ -47,14 +47,19 @@ export async function addProjectMember(input: z.infer<typeof addMemberSchema>) {
   });
   if (existing) throw new Error("Usuário já é membro deste projeto");
 
-  await db.insert(projectMembers).values({
-    projectId: data.projectId,
-    userId: data.userId,
-    role: data.role,
-  });
+  const [newMembership] = await db
+    .insert(projectMembers)
+    .values({
+      projectId: data.projectId,
+      userId: data.userId,
+      role: data.role,
+    })
+    .returning();
 
   const slug = await getProjectSlug(data.projectId);
   if (slug) revalidatePath(`/${slug}/settings`);
+
+  return { id: newMembership!.id, role: newMembership!.role };
 }
 
 // ─── Remove member ────────────────────────────────────────────────────────────

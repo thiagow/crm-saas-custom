@@ -194,19 +194,18 @@ export function SettingsForm({ project, stages: initialStages, members: initialM
     if (!addUserId) return;
     startTransition(async () => {
       try {
-        await addProjectMember({ projectId: project.id, userId: addUserId, role: addMemberRole });
+        const result = await addProjectMember({ projectId: project.id, userId: addUserId, role: addMemberRole });
         const user = availableUsers.find((u) => u.id === addUserId);
         if (user) {
           setMembers((prev) => [
             ...prev,
-            { id: crypto.randomUUID(), role: addMemberRole, user: { id: user.id, name: user.name, email: user.email } },
+            { id: result.id, role: result.role, user: { id: user.id, name: user.name, email: user.email } },
           ]);
         }
         setShowAddMember(false);
         setAddUserId("");
         setAddMemberRole("sales");
         toast.success("Membro adicionado.");
-        window.location.reload();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao adicionar membro");
       }
@@ -252,18 +251,16 @@ export function SettingsForm({ project, stages: initialStages, members: initialM
     if (!newStageName.trim()) return;
     startTransition(async () => {
       try {
-        await addPipelineStage({
+        const newStage = await addPipelineStage({
           projectId: project.id,
           name: newStageName.trim(),
           color: newStageColor,
         });
-        // Refresh stages list from server via revalidatePath
+        setStages((prev) => [...prev, newStage]);
         setAddingStage(false);
         setNewStageName("");
         setNewStageColor("#6366f1");
         toast.success("Estágio adicionado.");
-        // Reload the page to get updated stages list
-        window.location.reload();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao adicionar");
       }
