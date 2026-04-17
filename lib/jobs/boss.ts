@@ -3,15 +3,17 @@
  * pg-boss stores job state in Postgres tables (prefixed with pgboss.*).
  * Tables are auto-created on first start().
  *
- * We keep a module-level promise to avoid re-initializing on every Function invocation
- * within the same Node.js process lifetime (Netlify may reuse warm instances).
+ * The singleton is stored on `globalThis` so it survives Next.js HMR in dev mode.
+ * Module-level variables are reset on hot reload, which would orphan the pg-boss
+ * instance (connection still open, workers still polling) and create a new one
+ * without any registered workers.
  */
 import PgBoss from "pg-boss";
 
-let bossPromise: Promise<PgBoss> | null = null;
+const g = globalThis as unknown as { __pgBossPromise?: Promise<PgBoss> };
 
 export async function getBoss(): Promise<PgBoss> {
-  if (bossPromise) return bossPromise;
+  if (g.__pgBossPromise) return g.__pgBossPromise;
 
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required for pg-boss");
@@ -20,7 +22,7 @@ export async function getBoss(): Promise<PgBoss> {
   const connectionString = process.env.DATABASE_URL;
   const useSSL = process.env.DATABASE_SSL === "require";
 
-  bossPromise = (async () => {
+  g.__pgBossPromise = (async () => {
     const boss = new PgBoss({
       connectionString,
       ssl: useSSL,
@@ -32,8 +34,9 @@ export async function getBoss(): Promise<PgBoss> {
     });
 
     await boss.start();
+    console.log("[pg-boss] started successfully");
     return boss;
   })();
 
-  return bossPromise;
+  return g.__pgBossPromise;
 }
