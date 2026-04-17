@@ -5,40 +5,38 @@
  * Schedule: "* * * * *" (every 1 minute)
  * Timeout: Netlify Functions default 10s (Pro: 26s).
  * Each job processes one page of Google Places results (~20 places).
+ *
+ * Uses boss.fetch() instead of boss.work() — the correct pattern for serverless
+ * functions. boss.work() registers long-running workers and requires boss.stop()
+ * to clean up; but boss.stop() corrupts the singleton so subsequent invocations
+ * get a stopped boss and never process jobs. fetch() is stateless and sidesteps
+ * this entirely.
  */
 import type { Config, Handler } from "@netlify/functions";
 import { getBoss } from "../../lib/jobs/boss";
 import { processExtractionPage } from "../../lib/google-places/job-handler";
 import type { ExtractionStartJobData } from "../../lib/google-places/job-handler";
-import type { Job } from "pg-boss";
+
+const BATCH_SIZE = 5;
+const QUEUES = ["extraction:start", "extraction:page"] as const;
 
 const handler: Handler = async () => {
   const boss = await getBoss();
 
-  // Register handlers for both job types.
-  // pg-boss v10 WorkHandler receives Job<T>[] (batch), even when batchSize is 1.
-  await boss.work<ExtractionStartJobData>(
-    "extraction:start",
-    async (jobs: Job<ExtractionStartJobData>[]) => {
-      for (const job of jobs) {
+  for (const queue of QUEUES) {
+    const jobs = await boss.fetch<ExtractionStartJobData>(queue, { batchSize: BATCH_SIZE });
+    if (!jobs || jobs.length === 0) continue;
+
+    for (const job of jobs) {
+      try {
         await processExtractionPage(job.data);
+        await boss.complete(queue, job.id);
+      } catch (err) {
+        console.error(`[job-worker] job ${job.id} (${queue}) failed:`, err);
+        await boss.fail(queue, job.id, { message: err instanceof Error ? err.message : String(err) });
       }
-    },
-  );
-
-  await boss.work<ExtractionStartJobData>(
-    "extraction:page",
-    async (jobs: Job<ExtractionStartJobData>[]) => {
-      for (const job of jobs) {
-        await processExtractionPage(job.data);
-      }
-    },
-  );
-
-  // Give the worker 20 seconds to process available jobs
-  await new Promise<void>((resolve) => setTimeout(resolve, 20_000));
-
-  await boss.stop({ graceful: false, timeout: 3000 });
+    }
+  }
 
   return { statusCode: 200, body: "OK" };
 };

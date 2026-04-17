@@ -55,18 +55,34 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
   // Enqueue in pg-boss
   const { getBoss } = await import("@/lib/jobs/boss");
   const boss = await getBoss();
-  const jobId = await boss.send("extraction:start", {
-    extractionId: extraction.id,
-    query: data.query,
-    city: data.city,
-    state: data.state,
-    radiusMeters: data.radiusMeters,
-    maxResults: data.maxResults,
-    processed: undefined,
-    pageToken: undefined,
-  });
 
-  // Store job reference (only if jobId was created)
+  let jobId: string | null = null;
+  try {
+    jobId = await boss.send("extraction:start", {
+      extractionId: extraction.id,
+      query: data.query,
+      city: data.city,
+      state: data.state,
+      radiusMeters: data.radiusMeters,
+      maxResults: data.maxResults,
+      processed: undefined,
+      pageToken: undefined,
+    });
+  } catch (sendErr) {
+    // Enfileiramento falhou — marcar como failed para evitar registro órfão
+    console.error("[extraction] boss.send() failed:", sendErr);
+    await db
+      .update(extractions)
+      .set({
+        status: "failed",
+        errorMessage: "Falha ao enfileirar job: " + (sendErr instanceof Error ? sendErr.message : String(sendErr)),
+        finishedAt: new Date(),
+      })
+      .where(eq(extractions.id, extraction.id));
+    throw new Error("Falha ao iniciar extração. Verifique a conexão e tente novamente.");
+  }
+
+  // Store job reference
   if (jobId) {
     await db
       .update(extractions)

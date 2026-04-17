@@ -33,9 +33,37 @@ export interface ExtractionStartJobData {
 
 /**
  * Process one page of an extraction job.
- * Called by the Netlify Scheduled Function worker.
+ * Called by the Netlify Scheduled Function worker (via boss.fetch) or the dev worker.
+ * Throws on error — the caller is responsible for calling boss.fail().
  */
 export async function processExtractionPage(data: ExtractionStartJobData): Promise<void> {
+  const { extractionId } = data;
+
+  try {
+    await _processExtractionPageInner(data);
+  } catch (err) {
+    console.error(`[extraction] job failed for extractionId=${extractionId}:`, err);
+
+    // Best-effort: update extraction to "failed" so the user sees the error in the UI
+    try {
+      await db
+        .update(extractions)
+        .set({
+          status: "failed",
+          errorMessage: err instanceof Error ? err.message : String(err),
+          finishedAt: new Date(),
+        })
+        .where(eq(extractions.id, extractionId));
+    } catch (dbErr) {
+      console.error("[extraction] failed to persist error status:", dbErr);
+    }
+
+    // Re-throw so the caller (job-worker) can call boss.fail()
+    throw err;
+  }
+}
+
+async function _processExtractionPageInner(data: ExtractionStartJobData): Promise<void> {
   const { extractionId, query, city, state, radiusMeters, maxResults, pageToken } = data;
   const processed = data.processed ?? 0;
 

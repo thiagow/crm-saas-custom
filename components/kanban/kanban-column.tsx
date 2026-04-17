@@ -39,7 +39,7 @@ export function KanbanColumn({ stage, leads, projectSlug, onLeadClick, onLeadCre
           stageId: stage.id,
           name: newLeadName.trim(),
         });
-        onLeadCreated(lead);
+        onLeadCreated({ ...lead, activities: [] });
         setNewLeadName("");
         setShowAdd(false);
         toast.success("Lead criado");
