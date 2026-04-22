@@ -47,18 +47,20 @@ export async function startDevWorker() {
 
         console.log(`[dev-worker] processing ${jobs.length} job(s) from "${queue}"`);
 
-        for (const job of jobs) {
-          try {
-            await processExtractionPage(job.data);
-            await boss.complete(queue, job.id);
-            console.log(`[dev-worker] job ${job.id} completed`);
-          } catch (err) {
-            console.error(`[dev-worker] job ${job.id} failed:`, err);
-            await boss.fail(queue, job.id, {
-              message: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
+        await Promise.allSettled(
+          jobs.map(async (job) => {
+            try {
+              await processExtractionPage(job.data);
+              await boss.complete(queue, job.id);
+              console.log(`[dev-worker] job ${job.id} completed`);
+            } catch (err) {
+              console.error(`[dev-worker] job ${job.id} failed:`, err);
+              await boss.fail(queue, job.id, {
+                message: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })
+        );
       } catch (err) {
         console.error(`[dev-worker] error polling "${queue}":`, err);
       }

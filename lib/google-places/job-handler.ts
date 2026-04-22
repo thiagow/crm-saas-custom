@@ -106,12 +106,18 @@ async function _processExtractionPageInner(data: ExtractionStartJobData): Promis
 
   // Enrich Instagram handles for new places (batched to limit concurrent connections)
   const BATCH_SIZE = 5;
+  const INSTAGRAM_TIMEOUT_MS = 3000;
   const enriched: PromiseSettledResult<{ place: typeof newPlaces[number]; instagramHandle: string | undefined; instagramSource: string | undefined }>[] = [];
   for (let i = 0; i < newPlaces.length; i += BATCH_SIZE) {
     const batch = newPlaces.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.allSettled(
       batch.map(async (place) => {
-        const { handle, source } = await findInstagramHandle(place);
+        const { handle, source } = await Promise.race([
+          findInstagramHandle(place),
+          new Promise<Awaited<ReturnType<typeof findInstagramHandle>>>((resolve) =>
+            setTimeout(() => resolve({ handle: undefined, source: undefined }), INSTAGRAM_TIMEOUT_MS)
+          ),
+        ]);
         return { place, instagramHandle: handle, instagramSource: source };
       }),
     );
