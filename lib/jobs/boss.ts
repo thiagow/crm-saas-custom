@@ -34,6 +34,14 @@ export async function getBoss(): Promise<PgBoss> {
     });
 
     await boss.start();
+
+    // pg-boss v10 requires explicit queue creation before send() — without this,
+    // send() does an INNER JOIN against pgboss.queue, finds nothing, and returns null silently.
+    await Promise.all([
+      boss.createQueue("extraction:start"),
+      boss.createQueue("extraction:page"),
+    ]);
+
     console.log("[pg-boss] started successfully");
     return boss;
   })();
