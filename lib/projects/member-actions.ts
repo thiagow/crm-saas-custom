@@ -1,7 +1,7 @@
 "use server";
 
 import { projectMembers, projects, users } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { requireRole } from "@/lib/auth/rbac";
 import { db } from "@/lib/db/client";
 import { and, eq } from "drizzle-orm";
@@ -29,7 +29,7 @@ export async function addProjectMember(input: z.infer<typeof addMemberSchema>) {
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = addMemberSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   // Verify target user exists and is active
   const user = await db.query.users.findFirst({
@@ -74,7 +74,7 @@ export async function removeProjectMember(input: z.infer<typeof removeMemberSche
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = removeMemberSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   // Don't allow removing yourself
   const membership = await db.query.projectMembers.findFirst({
@@ -114,7 +114,7 @@ export async function updateMemberRole(input: z.infer<typeof updateRoleSchema>) 
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = updateRoleSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   await db
     .update(projectMembers)

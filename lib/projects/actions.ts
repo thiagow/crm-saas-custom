@@ -2,7 +2,7 @@
 
 import { and, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { DEFAULT_STAGES_B2B, DEFAULT_STAGES_B2C, pipelineStages, projectMembers, projects } from "@/db/schema";
 import { requireRole } from "@/lib/auth/rbac";
@@ -60,15 +60,13 @@ export async function createProject(input: z.infer<typeof createProjectSchema>) 
   return project;
 }
 
-export async function getProjects() {
-  const session = await auth();
-  if (!session?.user?.id) throw new Error("Unauthorized");
-
-  const userId = session.user.id;
+export async function getProjects(userId?: string) {
+  const resolvedUserId = userId ?? (await auth())?.user?.id;
+  if (!resolvedUserId) throw new Error("Unauthorized");
 
   // Get projects where user is a member (or all projects if owner)
   const memberships = await db.query.projectMembers.findMany({
-    where: eq(projectMembers.userId, userId),
+    where: eq(projectMembers.userId, resolvedUserId),
     with: {
       project: true,
     },
@@ -84,7 +82,7 @@ export async function archiveProject(projectId: string) {
   const session = await auth();
   if (!session?.user?.id) throw new Error("Unauthorized");
 
-  await requireRole(session.user.id, projectId, "admin");
+  await requireRole(session.user.id, projectId, "admin", getIsOwner(session));
 
   await db
     .update(projects)

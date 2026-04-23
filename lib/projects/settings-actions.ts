@@ -1,7 +1,7 @@
 "use server";
 
 import { leads, pipelineStages, projects } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { requireRole } from "@/lib/auth/rbac";
 import { db } from "@/lib/db/client";
 import { and, count, eq, sql } from "drizzle-orm";
@@ -20,7 +20,7 @@ export async function updateProjectSettings(input: z.infer<typeof updateProjectS
 
   const data = updateProjectSchema.parse(input);
 
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   const [updated] = await db
     .update(projects)
@@ -53,7 +53,7 @@ export async function addPipelineStage(input: z.infer<typeof addStageSchema>) {
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = addStageSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   const existing = await db.query.pipelineStages.findMany({
     where: eq(pipelineStages.projectId, data.projectId),
@@ -97,7 +97,7 @@ export async function updatePipelineStage(input: z.infer<typeof updateStageSchem
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = updateStageSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   await db
     .update(pipelineStages)
@@ -121,7 +121,7 @@ export async function deletePipelineStage(input: z.infer<typeof deleteStageSchem
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = deleteStageSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   const [leadsInStage] = await db
     .select({ total: count() })
@@ -153,7 +153,7 @@ export async function reorderPipelineStages(input: z.infer<typeof reorderStagesS
   if (!session?.user?.id) throw new Error("Unauthorized");
 
   const data = reorderStagesSchema.parse(input);
-  await requireRole(session.user.id, data.projectId, "admin");
+  await requireRole(session.user.id, data.projectId, "admin", getIsOwner(session));
 
   // Batch update orders using a CASE expression
   await db.execute(

@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { leads } from "@/db/schema";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { requireRole } from "@/lib/auth/rbac";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -50,7 +50,7 @@ export async function importLeadsFromCsv(input: {
   });
   if (!project) throw new Error("Project not found");
 
-  await requireRole(session.user.id, project.id, "sales");
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
   const { rows, columnMap, stageId } = input;
   const errors: string[] = [];

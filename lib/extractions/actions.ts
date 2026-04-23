@@ -1,8 +1,8 @@
 "use server";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { forProject } from "@/lib/db/for-project";
 import { extractionResults, extractions, leads, projects } from "@/db/schema";
@@ -34,7 +34,7 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
   });
   if (!project) throw new Error("Project not found");
 
-  await requireRole(session.user.id, project.id, "sales");
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
   // Enqueue the extraction job
   const [extraction] = await db
@@ -104,7 +104,7 @@ export async function getExtractions(projectSlug: string) {
   });
   if (!project) throw new Error("Project not found");
 
-  await forProject(project.id, session.user.id);
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   return db.query.extractions.findMany({
     where: eq(extractions.projectId, project.id),
@@ -153,7 +153,7 @@ export async function getExtractionStatus(extractionId: string, projectSlug: str
   });
   if (!project) throw new Error("Project not found");
 
-  await forProject(project.id, session.user.id);
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   return db.query.extractions.findFirst({
     where: and(eq(extractions.id, extractionId), eq(extractions.projectId, project.id)),
@@ -188,7 +188,7 @@ export async function getTriageResults(input: z.infer<typeof getTriageResultsSch
   });
   if (!project) throw new Error("Project not found");
 
-  await forProject(project.id, session.user.id);
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   // Build filter conditions
   const { sql, isNotNull, isNull, gte, like } = await import("drizzle-orm");
@@ -244,19 +244,18 @@ export async function promoteResultsToLeads(input: z.infer<typeof promoteLeadsSc
 
   await requireRole(session.user.id, project.id, "sales");
 
-  // Get the results to promote
-  const results = await db.query.extractionResults.findMany({
+  // Fetch only the requested results (not the entire table)
+  const toPromote = await db.query.extractionResults.findMany({
     where: and(
       eq(extractionResults.projectId, project.id),
       eq(extractionResults.status, "pending"),
+      inArray(extractionResults.id, data.resultIds),
     ),
     columns: {
       id: true, name: true, city: true, state: true, phone: true,
       website: true, instagramHandle: true, placeId: true,
     },
   });
-
-  const toPromote = results.filter((r) => data.resultIds.includes(r.id));
   if (toPromote.length === 0) return { promoted: 0 };
 
   // Create leads
@@ -281,17 +280,17 @@ export async function promoteResultsToLeads(input: z.infer<typeof promoteLeadsSc
     )
     .returning({ id: leads.id });
 
-  // Update extraction results
-  for (let i = 0; i < toPromote.length; i++) {
-    const result = toPromote[i];
-    const lead = createdLeads[i];
-    if (!result || !lead) continue;
-
-    await db
-      .update(extractionResults)
-      .set({ status: "promoted", promotedLeadId: lead.id })
-      .where(eq(extractionResults.id, result.id));
-  }
+  // Parallel updates — each result maps to a different promotedLeadId
+  await Promise.all(
+    toPromote.map((result, i) => {
+      const lead = createdLeads[i];
+      if (!lead) return Promise.resolve();
+      return db
+        .update(extractionResults)
+        .set({ status: "promoted", promotedLeadId: lead.id })
+        .where(eq(extractionResults.id, result.id));
+    }),
+  );
 
   revalidatePath(`/${data.projectSlug}/triage`);
   revalidatePath(`/${data.projectSlug}/kanban`);
@@ -311,12 +310,15 @@ export async function discardResults(input: { resultIds: string[]; projectSlug: 
 
   await requireRole(session.user.id, project.id, "sales");
 
-  for (const id of input.resultIds) {
-    await db
-      .update(extractionResults)
-      .set({ status: "discarded" })
-      .where(and(eq(extractionResults.id, id), eq(extractionResults.projectId, project.id)));
-  }
+  await db
+    .update(extractionResults)
+    .set({ status: "discarded" })
+    .where(
+      and(
+        inArray(extractionResults.id, input.resultIds),
+        eq(extractionResults.projectId, project.id),
+      ),
+    );
 
   revalidatePath(`/${input.projectSlug}/triage`);
 }

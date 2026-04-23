@@ -27,6 +27,7 @@ export default async function LeadsPage({ params }: Props) {
       where: eq(leads.projectId, project.id),
       with: { stage: true },
       orderBy: [asc(leads.createdAt)],
+      limit: 500,
     }),
     db.query.pipelineStages.findMany({
       where: eq(pipelineStages.projectId, project.id),

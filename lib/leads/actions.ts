@@ -2,7 +2,7 @@
 
 import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { auth } from "@/lib/auth";
+import { auth, getIsOwner } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { forProject } from "@/lib/db/for-project";
 import { activities, leads, pipelineStages, projects } from "@/db/schema";
@@ -20,7 +20,7 @@ export async function getKanbanData(projectSlug: string) {
   });
   if (!project) throw new Error("Project not found");
 
-  await forProject(project.id, session.user.id);
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   const [stages, allLeads] = await Promise.all([
     db.query.pipelineStages.findMany({
@@ -61,7 +61,7 @@ export async function moveLead(input: z.infer<typeof moveLeadSchema>) {
   });
   if (!project) throw new Error("Project not found");
 
-  await requireRole(session.user.id, project.id, "sales");
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
   // Get old stage for activity log
   const lead = await db.query.leads.findFirst({
@@ -111,7 +111,7 @@ export async function addActivity(input: z.infer<typeof addActivitySchema>) {
   });
   if (!project) throw new Error("Project not found");
 
-  await requireRole(session.user.id, project.id, "sales");
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
   // Verify lead belongs to project
   const lead = await db.query.leads.findFirst({
@@ -140,7 +140,7 @@ export async function getLeadDetails(leadId: string, projectSlug: string) {
   });
   if (!project) throw new Error("Project not found");
 
-  await forProject(project.id, session.user.id);
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   const lead = await db.query.leads.findFirst({
     where: and(eq(leads.id, leadId), eq(leads.projectId, project.id)),
@@ -182,7 +182,7 @@ export async function createLead(input: z.infer<typeof createLeadSchema>) {
   });
   if (!project) throw new Error("Project not found");
 
-  await requireRole(session.user.id, project.id, "sales");
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
   // Validate stage exists in project
   const stage = await db.query.pipelineStages.findFirst({

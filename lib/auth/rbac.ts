@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { projectMembers, users } from "@/db/schema";
+import { projectMembers } from "@/db/schema";
 
 export type ProjectRole = "owner" | "admin" | "sales" | "viewer";
 
@@ -13,20 +13,15 @@ const ROLE_HIERARCHY: Record<ProjectRole, number> = {
 
 /**
  * Check if a user has at least the required role in a project.
- * Global owners bypass all project-level checks.
+ * Pass isOwner=true (from session JWT) to bypass DB checks entirely for global owners.
  */
 export async function hasProjectRole(
   userId: string,
   projectId: string,
   minRole: ProjectRole,
+  isOwner?: boolean,
 ): Promise<boolean> {
-  // Global owner bypasses all checks
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-    columns: { isOwner: true },
-  });
-
-  if (user?.isOwner) return true;
+  if (isOwner) return true;
 
   const membership = await db.query.projectMembers.findFirst({
     where: and(
@@ -43,14 +38,15 @@ export async function hasProjectRole(
 
 /**
  * Assert that a user has at least the required role. Throws if not authorized.
- * Use in Server Actions and Route Handlers.
+ * Pass isOwner=true (from session JWT) to bypass DB checks entirely for global owners.
  */
 export async function requireRole(
   userId: string,
   projectId: string,
   minRole: ProjectRole,
+  isOwner?: boolean,
 ): Promise<void> {
-  const authorized = await hasProjectRole(userId, projectId, minRole);
+  const authorized = await hasProjectRole(userId, projectId, minRole, isOwner);
   if (!authorized) {
     throw new Error("Unauthorized: insufficient role for this project");
   }

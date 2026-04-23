@@ -9,7 +9,7 @@
  *  2. "extraction:page" jobs → process subsequent pages
  *  3. When no nextPageToken, marks extraction as completed
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { extractionResults, extractions } from "@/db/schema";
 import { searchPlaces } from "./client";
@@ -92,11 +92,15 @@ async function _processExtractionPageInner(data: ExtractionStartJobData): Promis
     apiKey,
   });
 
-  // Check for duplicates by place_id within this project
+  // Check for duplicates by place_id — only query the IDs we're about to insert
+  const currentPlaceIds = places.map((p) => p.id);
   const existingPlaceIds = new Set(
     (
       await db.query.extractionResults.findMany({
-        where: eq(extractionResults.projectId, extraction.projectId),
+        where: and(
+          eq(extractionResults.projectId, extraction.projectId),
+          inArray(extractionResults.placeId, currentPlaceIds),
+        ),
         columns: { placeId: true },
       })
     ).map((r) => r.placeId),
