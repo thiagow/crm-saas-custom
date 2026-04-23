@@ -15,6 +15,7 @@ export default auth((req: NextAuthRequest) => {
   const isPublic =
     pathname === "/login" ||
     pathname === "/verify" ||
+    pathname === "/api/health" ||
     pathname.startsWith("/api/auth");
 
   if (!isPublic && !isAuthenticated) {
