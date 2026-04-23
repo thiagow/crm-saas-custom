@@ -1,5 +1,5 @@
 [build]
-  command = "npm run db:migrate && npm run build"
+  command = "npm run build"
   publish = ".next"
 
 [build.environment]
@@ -15,11 +15,6 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-
-# Scheduled job worker — runs every minute
-[[functions.schedule]]
-  name = "job-worker"
-  cron = "* * * * *"
 
 # Headers (complementary to next.config.ts)
 [[headers]]
