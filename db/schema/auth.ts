@@ -14,6 +14,7 @@ export const users = pgTable("users", {
   image: text("image"),
   isOwner: boolean("is_owner").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });

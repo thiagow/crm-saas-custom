@@ -9,7 +9,17 @@
       "Bash(rm -rf \"c:/Projetos/crm-saas-temp\")",
       "Bash(npm install *)",
       "Bash(npm show *)",
-      "Bash(npm audit *)"
+      "Bash(npm audit *)",
+      "Bash(curl -s \"http://localhost:3000/api/auth/signin\")",
+      "Bash(npx netlify-cli *)",
+      "mcp__claude_ai_Firecrawl__firecrawl_scrape",
+      "Bash(curl -s \"https://crm-saas-custom.netlify.app/api/auth/csrf\")",
+      "Bash(curl -s \"https://crm-saas-custom.netlify.app/api/auth/providers\")",
+      "Bash(curl -sv \"https://crm-saas-custom.netlify.app/api/auth/callback/resend?callbackUrl=https%3A%2F%2Fcrm-saas-custom.netlify.app&token=INVALID&email=thiagow.net%40gmail.com\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(netlify env:list)"
     ]
   }
 }

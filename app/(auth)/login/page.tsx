@@ -1,12 +1,10 @@
-import { signIn } from "@/lib/auth";
-import { auth } from "@/lib/auth";
-import { checkEmailAccess } from "@/lib/users/actions";
+import { auth, signIn } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string; error?: string; email?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string; success?: string; email?: string }>;
 }) {
   const session = await auth();
   if (session?.user) redirect("/");
@@ -14,6 +12,7 @@ export default async function LoginPage({
   const params = await searchParams;
   const callbackUrl = params.callbackUrl ?? "/";
   const error = params.error;
+  const success = params.success;
   const prefilledEmail = params.email ?? "";
 
   return (
@@ -40,33 +39,36 @@ export default async function LoginPage({
           <p className="mt-1 text-sm text-zinc-500">Acesse sua conta</p>
         </div>
 
+        {/* Success message */}
+        {success === "PasswordSet" && (
+          <div className="mb-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+            <p className="text-sm text-emerald-400">
+              Senha definida com sucesso. Faça login abaixo.
+            </p>
+          </div>
+        )}
+
         {/* Error message */}
         {error && (
           <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
             <p className="text-sm text-red-400">
-              {error === "Unauthorized"
-                ? "Acesso não autorizado. Entre em contato com o administrador."
-                : error === "EmailCreateAccount"
-                  ? "Não foi possível criar a conta. Tente novamente."
+              {error === "CredentialsSignin"
+                ? "Email ou senha inválidos."
+                : error === "Unauthorized"
+                  ? "Acesso não autorizado. Entre em contato com o administrador."
                   : "Algo deu errado. Tente novamente."}
             </p>
           </div>
         )}
 
-        {/* Magic link form */}
+        {/* Credentials form */}
         <form
           className="space-y-3"
           action={async (formData: FormData) => {
             "use server";
             const email = formData.get("email") as string;
-
-            // DB-based access check (users + invites)
-            const allowed = await checkEmailAccess(email);
-            if (!allowed) {
-              redirect("/login?error=Unauthorized");
-            }
-
-            await signIn("resend", { email, redirectTo: callbackUrl });
+            const password = formData.get("password") as string;
+            await signIn("credentials", { email, password, redirectTo: callbackUrl });
           }}
         >
           <div>
@@ -85,17 +87,36 @@ export default async function LoginPage({
               className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
             />
           </div>
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-zinc-400 mb-1.5">
+              Senha
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              required
+              autoComplete="current-password"
+              placeholder="••••••••"
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+            />
+          </div>
           <button
             type="submit"
             className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0a] transition-colors"
           >
-            Enviar link de acesso
+            Entrar
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-zinc-600">
-          Você receberá um link de acesso no seu email.
-        </p>
+        <div className="mt-4 text-center">
+          <a
+            href="/forgot-password"
+            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            Esqueceu a senha?
+          </a>
+        </div>
       </div>
     </div>
   );

@@ -1,17 +1,10 @@
 import { accounts, authAuditLog, invites, projectMembers, sessions, users, verificationTokens } from "@/db/schema";
 import { db } from "@/lib/db/client";
+import { verifyPassword } from "@/lib/auth/password";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { NextAuthConfig } from "next-auth";
-import Resend from "next-auth/providers/resend";
-
-if (!process.env.RESEND_API_KEY) {
-  throw new Error("RESEND_API_KEY environment variable is required");
-}
-
-if (!process.env.RESEND_FROM_EMAIL) {
-  throw new Error("RESEND_FROM_EMAIL environment variable is required");
-}
+import Credentials from "next-auth/providers/credentials";
 
 export const authConfig: NextAuthConfig = {
   adapter: DrizzleAdapter(db, {
@@ -25,10 +18,39 @@ export const authConfig: NextAuthConfig = {
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   providers: [
-    Resend({
-      apiKey: process.env.RESEND_API_KEY,
-      from: process.env.RESEND_FROM_EMAIL,
-      name: "Email",
+    Credentials({
+      credentials: {
+        email: { type: "email" },
+        password: { type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null;
+
+        const email = credentials.email as string;
+        const password = credentials.password as string;
+
+        const user = await db.query.users.findFirst({
+          where: eq(users.email, email),
+          columns: {
+            id: true,
+            email: true,
+            name: true,
+            isOwner: true,
+            isActive: true,
+            passwordHash: true,
+          },
+        });
+
+        if (!user?.passwordHash) return null;
+        if (!user.isActive) return null;
+
+        const valid = await verifyPassword(password, user.passwordHash);
+        if (!valid) return null;
+
+        const isOwner = user.isOwner || (process.env.OWNER_EMAIL === email);
+
+        return { id: user.id, email: user.email, name: user.name, isOwner };
+      },
     }),
   ],
   pages: {
@@ -44,26 +66,14 @@ export const authConfig: NextAuthConfig = {
         return true;
       }
 
-      const now = new Date();
-
-      // 1. User already exists in the system → check isActive
+      // authorize() already verified the user exists + isActive, but this adds defense-in-depth
       const existingUser = await db.query.users.findFirst({
         where: eq(users.email, user.email),
         columns: { isActive: true },
       });
       if (existingUser) return existingUser.isActive;
 
-      // 2. No existing user → must have a valid, non-expired invite
-      const invite = await db.query.invites.findFirst({
-        where: and(
-          eq(invites.email, user.email),
-          isNull(invites.acceptedAt),
-          gt(invites.expiresAt, now),
-        ),
-        columns: { id: true },
-      });
-
-      return !!invite;
+      return false;
     },
     jwt({ token, user }) {
       if (user) {

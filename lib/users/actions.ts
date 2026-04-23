@@ -2,6 +2,7 @@
 
 import { invites, projectMembers, users } from "@/db/schema";
 import { auth } from "@/lib/auth";
+import { createSetupToken } from "@/lib/auth/password-reset";
 import { db } from "@/lib/db/client";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -116,8 +117,9 @@ export async function inviteUser(input: z.infer<typeof inviteSchema>) {
     })
     .returning();
 
-  const appUrl = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
-  const loginUrl = `${appUrl}/login?email=${encodeURIComponent(data.email)}`;
+  const setupToken = await createSetupToken(data.email);
+  const appUrl = process.env.AUTH_URL ?? "http://localhost:3000";
+  const setupUrl = `${appUrl}/setup-password?token=${encodeURIComponent(setupToken)}`;
 
   const { error } = await resend.emails.send({
     from: process.env.RESEND_FROM_EMAIL!,
@@ -133,13 +135,13 @@ export async function inviteUser(input: z.infer<typeof inviteSchema>) {
     </div>
     <h1 style="font-size:20px;font-weight:600;color:#f4f4f5;margin:0 0 8px">Você foi convidado</h1>
     <p style="color:#71717a;font-size:14px;margin:0 0 32px;line-height:1.6">
-      Você recebeu um convite para acessar o CRM. Clique no botão abaixo para entrar.
+      Você recebeu um convite para acessar o CRM. Clique no botão abaixo para definir sua senha e entrar.
     </p>
-    <a href="${loginUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500">
-      Acessar o CRM
+    <a href="${setupUrl}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500">
+      Definir senha e acessar
     </a>
     <p style="color:#52525b;font-size:12px;margin-top:32px">
-      Este convite expira em 7 dias. Se você não esperava este email, pode ignorá-lo.
+      Este link expira em 24 horas. Se você não esperava este email, pode ignorá-lo.
     </p>
   </div>
 </body>
