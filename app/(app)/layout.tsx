@@ -11,7 +11,12 @@ export default async function AppLayout({
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
-  const projects = await getProjects(session.user.id);
+  let projects: Awaited<ReturnType<typeof getProjects>> = [];
+  try {
+    projects = await getProjects(session.user.id);
+  } catch (error) {
+    console.error("AppLayout: failed to load projects", error);
+  }
 
   // isOwner is set in the session callback from the JWT token
   const user = session.user as typeof session.user & { isOwner?: boolean };
