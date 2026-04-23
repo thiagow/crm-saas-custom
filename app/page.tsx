@@ -1,14 +1,15 @@
 import { redirect } from "next/navigation";
 import { getProjects } from "@/lib/projects/actions";
 
-/**
- * Root route — redirect to the first project's kanban,
- * or to project creation if no projects exist.
- */
 export default async function Home() {
-  const projects = await getProjects();
+  let projects;
+  try {
+    projects = await getProjects();
+  } catch {
+    redirect("/login");
+  }
 
-  if (projects.length === 0) {
+  if (!projects || projects.length === 0) {
     redirect("/projects/new");
   }
 
