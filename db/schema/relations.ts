@@ -5,6 +5,7 @@ import { invites } from "./invites";
 import { activities, leads } from "./leads";
 import { pipelineStages } from "./pipeline";
 import { projectMembers, projects } from "./projects";
+import { whatsappTemplates } from "./whatsapp-templates";
 
 // Auth relations
 export const usersRelations = relations(users, ({ many }) => ({
@@ -43,6 +44,7 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   stages: many(pipelineStages),
   leads: many(leads),
   extractions: many(extractions),
+  whatsappTemplates: many(whatsappTemplates),
 }));
 
 export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
@@ -65,6 +67,11 @@ export const leadsRelations = relations(leads, ({ one, many }) => ({
 
 export const activitiesRelations = relations(activities, ({ one }) => ({
   lead: one(leads, { fields: [activities.leadId], references: [leads.id] }),
+}));
+
+// WhatsApp Template relations
+export const whatsappTemplatesRelations = relations(whatsappTemplates, ({ one }) => ({
+  project: one(projects, { fields: [whatsappTemplates.projectId], references: [projects.id] }),
 }));
 
 // Extraction relations

@@ -4,8 +4,9 @@ import { useState, useRef, useTransition } from "react";
 import Papa from "papaparse";
 import { toast } from "sonner";
 import { importLeadsFromCsv } from "@/lib/leads/csv-import";
-import { createLead } from "@/lib/leads/actions";
+import { createLead, updateLead, deleteLead } from "@/lib/leads/actions";
 import { cn } from "@/lib/utils";
+import { formatPhoneNumber } from "@/lib/phone-mask";
 import type { leads, pipelineStages } from "@/db/schema";
 
 type Lead = typeof leads.$inferSelect & { stage: typeof pipelineStages.$inferSelect };
@@ -31,6 +32,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
     company: "",
     phone: "",
     email: "",
+    website: "",
     city: "",
     state: "",
     instagram: "",
@@ -45,6 +47,21 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
     company: "",
     phone: "",
     email: "",
+    website: "",
+    city: "",
+    state: "",
+    instagramHandle: "",
+    value: "",
+  });
+
+  // Edit lead modal state
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [editLeadForm, setEditLeadForm] = useState({
+    name: "",
+    company: "",
+    phone: "",
+    email: "",
+    website: "",
     city: "",
     state: "",
     instagramHandle: "",
@@ -53,6 +70,92 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
 
   const [, startTransition] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function openEditModal(lead: Lead) {
+    setEditingLead(lead);
+    setEditLeadForm({
+      name: lead.name,
+      company: lead.company ?? "",
+      phone: lead.phone ?? "",
+      email: lead.email ?? "",
+      website: lead.website ?? "",
+      city: lead.city ?? "",
+      state: lead.state ?? "",
+      instagramHandle: lead.instagramHandle ?? "",
+      value: lead.value ? String(lead.value) : "",
+    });
+    setTargetStageId(lead.stageId);
+  }
+
+  function closeEditModal() {
+    setEditingLead(null);
+    setEditLeadForm({
+      name: "",
+      company: "",
+      phone: "",
+      email: "",
+      website: "",
+      city: "",
+      state: "",
+      instagramHandle: "",
+      value: "",
+    });
+  }
+
+  function handleUpdateLead() {
+    startTransition(async () => {
+      try {
+        if (!editingLead) return;
+        if (!editLeadForm.name.trim()) {
+          toast.error("Nome é obrigatório");
+          return;
+        }
+        await updateLead({
+          projectSlug,
+          leadId: editingLead.id,
+          stageId: targetStageId,
+          name: editLeadForm.name,
+          company: editLeadForm.company || undefined,
+          phone: editLeadForm.phone || undefined,
+          email: editLeadForm.email || undefined,
+          website: editLeadForm.website || undefined,
+          city: editLeadForm.city || undefined,
+          state: editLeadForm.state || undefined,
+          instagramHandle: editLeadForm.instagramHandle || undefined,
+          value: editLeadForm.value ? parseFloat(editLeadForm.value) : undefined,
+        });
+        toast.success("Lead atualizado");
+        closeEditModal();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao atualizar lead");
+      }
+    });
+  }
+
+  function handleDeleteLead(lead: Lead) {
+    if (lead.stage.name !== "Novo") {
+      toast.error("Lead pode ser excluído apenas no estágio Novo");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Tem certeza que deseja excluir "${lead.name}"? Esta ação não pode ser desfeita.`
+    );
+
+    if (!confirmed) return;
+
+    startTransition(async () => {
+      try {
+        await deleteLead({
+          projectSlug,
+          leadId: lead.id,
+        });
+        toast.success("Lead excluído");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao excluir lead");
+      }
+    });
+  }
 
   function handleFile(file: File) {
     Papa.parse<Record<string, string>>(file, {
@@ -70,8 +173,9 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
         setColumnMap({
           name: headers.find((h) => /nome|name/i.test(h)) ?? "",
           company: headers.find((h) => /empresa|company/i.test(h)) ?? "",
-          phone: headers.find((h) => /telefone|phone|tel|cel/i.test(h)) ?? "",
+          phone: headers.find((h) => /telefone|phone|tel|cel|whatsapp|whatsapp/i.test(h)) ?? "",
           email: headers.find((h) => /email|e-mail/i.test(h)) ?? "",
+          website: headers.find((h) => /site|website|www/i.test(h)) ?? "",
           city: headers.find((h) => /cidade|city/i.test(h)) ?? "",
           state: headers.find((h) => /estado|state|uf/i.test(h)) ?? "",
           instagram: headers.find((h) => /instagram|ig/i.test(h)) ?? "",
@@ -109,8 +213,8 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
   }
 
   function downloadTemplate() {
-    const headers = ["Nome", "Empresa", "Telefone", "Email", "Cidade", "Estado", "Instagram"];
-    const example = ["João Silva", "Academia Fight Club", "(11) 99999-0000", "joao@academia.com", "São Paulo", "SP", "@joao.silva"];
+    const headers = ["Nome", "Empresa", "Telefone", "Email", "Site", "Cidade", "Estado", "Instagram"];
+    const example = ["João Silva", "Academia Fight Club", "(11) 99999-0000", "joao@academia.com", "https://www.academia.com", "São Paulo", "SP", "@joao.silva"];
     const csv = [headers.join(","), example.join(",")].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -135,6 +239,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           company: newLeadForm.company || undefined,
           phone: newLeadForm.phone || undefined,
           email: newLeadForm.email || undefined,
+          website: newLeadForm.website || undefined,
           city: newLeadForm.city || undefined,
           state: newLeadForm.state || undefined,
           instagramHandle: newLeadForm.instagramHandle || undefined,
@@ -147,6 +252,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           company: "",
           phone: "",
           email: "",
+          website: "",
           city: "",
           state: "",
           instagramHandle: "",
@@ -224,7 +330,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-zinc-950 z-10">
               <tr className="border-b border-zinc-800 text-left">
-                {["Empresa/Nome", "Contato", "Localização", "Estágio", "Fonte"].map((h) => (
+                {["Empresa/Nome", "Contato", "Localização", "Estágio", "Fonte", "Ações"].map((h) => (
                   <th key={h} className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
                     {h}
                   </th>
@@ -259,6 +365,31 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                       {SOURCE_LABELS[lead.source] ?? lead.source}
                     </span>
                   </td>
+                  <td className="p-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(lead)}
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition-colors"
+                        title="Editar lead"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteLead(lead)}
+                        disabled={lead.stage.name !== "Novo"}
+                        className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:bg-red-950 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+                        title={lead.stage.name === "Novo" ? "Excluir lead" : "Pode ser excluído apenas no estágio Novo"}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -282,6 +413,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                 { key: "company", label: "Empresa" },
                 { key: "phone", label: "Telefone" },
                 { key: "email", label: "Email" },
+                { key: "website", label: "Site" },
                 { key: "city", label: "Cidade" },
                 { key: "state", label: "Estado (UF)" },
                 { key: "instagram", label: "Instagram" },
@@ -372,8 +504,9 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
               {[
                 { key: "name", label: "Nome*", type: "text" },
                 { key: "company", label: "Empresa", type: "text" },
-                { key: "phone", label: "Telefone", type: "tel" },
+                { key: "phone", label: "WhatsApp", type: "tel" },
                 { key: "email", label: "Email", type: "email" },
+                { key: "website", label: "Site", type: "url" },
                 { key: "city", label: "Cidade", type: "text" },
                 { key: "state", label: "Estado (UF)", type: "text" },
                 { key: "instagramHandle", label: "Instagram", type: "text" },
@@ -387,9 +520,13 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                     type={type}
                     placeholder={label}
                     value={newLeadForm[key as keyof typeof newLeadForm]}
-                    onChange={(e) =>
-                      setNewLeadForm((prev) => ({ ...prev, [key]: e.target.value }))
-                    }
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (key === "phone") {
+                        value = formatPhoneNumber(value);
+                      }
+                      setNewLeadForm((prev) => ({ ...prev, [key]: value }));
+                    }}
                     className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
@@ -427,6 +564,83 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                 className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Criar lead
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Edit lead modal */}
+      {editingLead && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={closeEditModal} />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <h2 className="text-base font-semibold text-zinc-100 mb-4">Editar lead</h2>
+
+            <div className="space-y-3 mb-6">
+              {[
+                { key: "name", label: "Nome*", type: "text" },
+                { key: "company", label: "Empresa", type: "text" },
+                { key: "phone", label: "WhatsApp", type: "tel" },
+                { key: "email", label: "Email", type: "email" },
+                { key: "website", label: "Site", type: "url" },
+                { key: "city", label: "Cidade", type: "text" },
+                { key: "state", label: "Estado (UF)", type: "text" },
+                { key: "instagramHandle", label: "Instagram", type: "text" },
+                { key: "value", label: "Valor (R$)", type: "number" },
+              ].map(({ key, label, type }) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">
+                    {label}
+                  </label>
+                  <input
+                    type={type}
+                    placeholder={label}
+                    value={editLeadForm[key as keyof typeof editLeadForm]}
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (key === "phone") {
+                        value = formatPhoneNumber(value);
+                      }
+                      setEditLeadForm((prev) => ({ ...prev, [key]: value }));
+                    }}
+                    className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              ))}
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">
+                  Estágio
+                </label>
+                <select
+                  value={targetStageId}
+                  onChange={(e) => setTargetStageId(e.target.value)}
+                  className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {stages.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="flex-1 rounded-lg border border-zinc-800 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleUpdateLead}
+                className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Salvar alterações
               </button>
             </div>
           </div>

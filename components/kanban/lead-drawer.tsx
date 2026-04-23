@@ -6,7 +6,10 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { addActivity, getLeadDetails } from "@/lib/leads/actions";
 import type { getKanbanData } from "@/lib/leads/actions";
+import { getMessageTemplates } from "@/lib/projects/message-templates-actions";
 import { cn } from "@/lib/utils";
+
+type WhatsappTemplate = Awaited<ReturnType<typeof getMessageTemplates>>[number];
 
 type Lead = Awaited<ReturnType<typeof getKanbanData>>["leads"][number];
 type LeadDetails = Awaited<ReturnType<typeof getLeadDetails>>;
@@ -44,6 +47,11 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
   const [content, setContent] = useState("");
   const [, startTransition] = useTransition();
 
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [templates, setTemplates] = useState<WhatsappTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
   useEffect(() => {
     getLeadDetails(lead.id, projectSlug)
       .then(setDetails)
@@ -76,8 +84,134 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
     });
   }
 
+  async function handleWhatsAppClick() {
+    setShowWhatsAppModal(true);
+    setSelectedTemplateId(null);
+    setTemplatesLoading(true);
+    try {
+      const list = await getMessageTemplates(projectSlug);
+      setTemplates(list);
+    } catch {
+      toast.error("Erro ao carregar templates");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
+
+  function handleSend() {
+    const digits = lead.phone!.replace(/\D/g, "").replace(/^(?!55)/, "55");
+    const template = templates.find((t) => t.id === selectedTemplateId);
+    const url = template
+      ? `https://wa.me/${digits}?text=${encodeURIComponent(template.body)}`
+      : `https://wa.me/${digits}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setShowWhatsAppModal(false);
+  }
+
   return (
     <>
+      {/* WhatsApp Template Modal */}
+      {showWhatsAppModal && (
+        <>
+          <div
+            className="fixed inset-0 z-[60] bg-black/70"
+            onClick={() => setShowWhatsAppModal(false)}
+          />
+          <div className="fixed left-1/2 top-1/2 z-[70] w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-100">Enviar WhatsApp</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">{lead.phone}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWhatsAppModal(false)}
+                className="rounded-md p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition-colors"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {templatesLoading && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+                </div>
+              )}
+              {!templatesLoading && templates.length === 0 && (
+                <div className="text-center py-6">
+                  <p className="text-sm text-zinc-500">Nenhum template cadastrado.</p>
+                  <a
+                    href={`/${projectSlug}/settings`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 mt-1 inline-block"
+                  >
+                    Cadastrar templates em Configurações →
+                  </a>
+                </div>
+              )}
+              {!templatesLoading && templates.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 mb-3">Selecione um template para pré-preencher a mensagem:</p>
+                  {templates.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setSelectedTemplateId(t.id === selectedTemplateId ? null : t.id)}
+                      className={cn(
+                        "w-full text-left rounded-lg border px-4 py-3 transition-colors",
+                        selectedTemplateId === t.id
+                          ? "border-indigo-500 bg-indigo-600/10"
+                          : "border-zinc-800 bg-zinc-900 hover:border-zinc-700",
+                      )}
+                    >
+                      <p className="text-sm font-medium text-zinc-200">{t.title}</p>
+                      {selectedTemplateId === t.id && (
+                        <p className="text-xs text-zinc-400 mt-2 whitespace-pre-wrap leading-relaxed">{t.body}</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-zinc-800 px-5 py-4 gap-3">
+              {!templatesLoading && templates.length === 0 && (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  className="flex-1 rounded-lg border border-zinc-700 py-2 text-sm text-zinc-300 hover:bg-zinc-800 transition-colors"
+                >
+                  Abrir WhatsApp mesmo assim
+                </button>
+              )}
+              {(templatesLoading || templates.length > 0) && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowWhatsAppModal(false)}
+                    className="flex-1 rounded-lg border border-zinc-800 py-2 text-sm text-zinc-400 hover:bg-zinc-800 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={templatesLoading}
+                    className="flex-1 rounded-lg bg-green-600 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Enviar
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/50"
@@ -111,10 +245,14 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
         <div className="border-b border-zinc-800 p-4 grid grid-cols-2 gap-3">
           {lead.phone && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-0.5">Telefone</p>
-              <a href={`tel:${lead.phone}`} className="text-sm text-zinc-300 hover:text-indigo-400 transition-colors">
+              <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-0.5">WhatsApp</p>
+              <button
+                type="button"
+                onClick={handleWhatsAppClick}
+                className="text-sm text-zinc-300 hover:text-green-400 transition-colors text-left"
+              >
                 {lead.phone}
-              </a>
+              </button>
             </div>
           )}
           {lead.email && (

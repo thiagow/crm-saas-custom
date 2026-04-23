@@ -170,6 +170,21 @@ const createLeadSchema = z.object({
   value: z.number().positive().optional(),
 });
 
+const updateLeadSchema = z.object({
+  leadId: z.string(),
+  projectSlug: z.string(),
+  stageId: z.string(),
+  name: z.string().min(1).max(200),
+  company: z.string().max(200).optional(),
+  phone: z.string().max(50).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  website: z.string().url().optional().or(z.literal("")),
+  instagramHandle: z.string().max(100).optional(),
+  city: z.string().max(100).optional(),
+  state: z.string().max(50).optional(),
+  value: z.number().positive().optional(),
+});
+
 export async function createLead(input: z.infer<typeof createLeadSchema>) {
   const session = await auth();
   if (!session?.user?.id) throw new Error("Unauthorized");
@@ -217,4 +232,90 @@ export async function createLead(input: z.infer<typeof createLeadSchema>) {
   revalidatePath(`/${data.projectSlug}/leads`);
 
   return lead;
+}
+
+export async function updateLead(input: z.infer<typeof updateLeadSchema>) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const data = updateLeadSchema.parse(input);
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, data.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
+
+  // Verify lead exists and belongs to project
+  const lead = await db.query.leads.findFirst({
+    where: and(eq(leads.id, data.leadId), eq(leads.projectId, project.id)),
+    columns: { id: true },
+  });
+  if (!lead) throw new Error("Lead not found");
+
+  // Validate stage exists in project
+  const stage = await db.query.pipelineStages.findFirst({
+    where: and(eq(pipelineStages.id, data.stageId), eq(pipelineStages.projectId, project.id)),
+    columns: { id: true },
+  });
+  if (!stage) throw new Error("Stage not found");
+
+  await db
+    .update(leads)
+    .set({
+      name: data.name,
+      company: data.company,
+      phone: data.phone,
+      email: data.email,
+      website: data.website,
+      instagramHandle: data.instagramHandle,
+      city: data.city,
+      state: data.state,
+      stageId: data.stageId,
+      value: data.value,
+      updatedAt: new Date(),
+    })
+    .where(eq(leads.id, data.leadId));
+
+  revalidatePath(`/${data.projectSlug}/kanban`);
+  revalidatePath(`/${data.projectSlug}/leads`);
+}
+
+const deleteLeadSchema = z.object({
+  leadId: z.string(),
+  projectSlug: z.string(),
+});
+
+export async function deleteLead(input: z.infer<typeof deleteLeadSchema>) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const data = deleteLeadSchema.parse(input);
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, data.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
+
+  // Verify lead exists and belongs to project
+  const lead = await db.query.leads.findFirst({
+    where: and(eq(leads.id, data.leadId), eq(leads.projectId, project.id)),
+    with: { stage: { columns: { name: true } } },
+  });
+  if (!lead) throw new Error("Lead not found");
+
+  // Only allow deletion if lead is in "Novo" stage
+  if (lead.stage.name !== "Novo") {
+    throw new Error("Lead pode ser excluído apenas no estágio Novo");
+  }
+
+  await db.delete(leads).where(eq(leads.id, data.leadId));
+
+  revalidatePath(`/${data.projectSlug}/kanban`);
+  revalidatePath(`/${data.projectSlug}/leads`);
 }

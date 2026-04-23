@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
-import { and, eq, notInArray } from "drizzle-orm";
-import { projects, pipelineStages, projectMembers, users } from "@/db/schema";
+import { and, asc, eq, notInArray } from "drizzle-orm";
+import { projects, pipelineStages, projectMembers, users, whatsappTemplates } from "@/db/schema";
 import { requireRole } from "@/lib/auth/rbac";
 import { SettingsForm } from "@/components/settings/settings-form";
 
@@ -32,10 +32,17 @@ export default async function SettingsPage({ params }: Props) {
     redirect(`/${projectSlug}/kanban`);
   }
 
-  const stages = await db.query.pipelineStages.findMany({
-    where: eq(pipelineStages.projectId, project.id),
-    orderBy: (t, { asc }) => [asc(t.order)],
-  });
+  const [stages, templates] = await Promise.all([
+    db.query.pipelineStages.findMany({
+      where: eq(pipelineStages.projectId, project.id),
+      orderBy: (t, { asc }) => [asc(t.order)],
+    }),
+    db.query.whatsappTemplates.findMany({
+      where: eq(whatsappTemplates.projectId, project.id),
+      orderBy: [asc(whatsappTemplates.createdAt)],
+      limit: 100,
+    }),
+  ]);
 
   const members = await db.query.projectMembers.findMany({
     where: eq(projectMembers.projectId, project.id),
@@ -76,6 +83,7 @@ export default async function SettingsPage({ params }: Props) {
         stages={stages}
         members={members}
         availableUsers={availableUsers}
+        whatsappTemplates={templates}
       />
     </div>
   );

@@ -16,5 +16,8 @@ export * from "./leads";
 // Extractions
 export * from "./extractions";
 
+// WhatsApp Templates
+export * from "./whatsapp-templates";
+
 // Relations (must be last — references all tables)
 export * from "./relations";

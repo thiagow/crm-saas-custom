@@ -10,9 +10,15 @@ import {
   updateProjectSettings,
 } from "@/lib/projects/settings-actions";
 import {
+  createMessageTemplate,
+  updateMessageTemplate,
+  deleteMessageTemplate,
+} from "@/lib/projects/message-templates-actions";
+import {
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  MessageSquareIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -50,6 +56,12 @@ interface AvailableUser {
   email: string;
 }
 
+interface WhatsappTemplate {
+  id: string;
+  title: string;
+  body: string;
+}
+
 interface Project {
   id: string;
   slug: string;
@@ -63,9 +75,10 @@ interface Props {
   stages: Stage[];
   members: Member[];
   availableUsers: AvailableUser[];
+  whatsappTemplates: WhatsappTemplate[];
 }
 
-export function SettingsForm({ project, stages: initialStages, members: initialMembers, availableUsers }: Props) {
+export function SettingsForm({ project, stages: initialStages, members: initialMembers, availableUsers, whatsappTemplates: initialTemplates }: Props) {
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? "");
   const [archiveConfirm, setArchiveConfirm] = useState(false);
@@ -90,6 +103,16 @@ export function SettingsForm({ project, stages: initialStages, members: initialM
   const [addingStage, setAddingStage] = useState(false);
   const [newStageName, setNewStageName] = useState("");
   const [newStageColor, setNewStageColor] = useState("#6366f1");
+
+  // WhatsApp templates state
+  const [templates, setTemplates] = useState<WhatsappTemplate[]>(initialTemplates);
+  const [addingTemplate, setAddingTemplate] = useState(false);
+  const [newTemplateTitle, setNewTemplateTitle] = useState("");
+  const [newTemplateBody, setNewTemplateBody] = useState("");
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [editTemplateTitle, setEditTemplateTitle] = useState("");
+  const [editTemplateBody, setEditTemplateBody] = useState("");
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
 
   const [, startTransition] = useTransition();
 
@@ -242,6 +265,69 @@ export function SettingsForm({ project, stages: initialStages, members: initialM
         toast.success("Papel atualizado.");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao atualizar papel");
+      }
+    });
+  }
+
+  function handleAddTemplate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newTemplateTitle.trim() || !newTemplateBody.trim()) return;
+    startTransition(async () => {
+      try {
+        const created = await createMessageTemplate({
+          projectId: project.id,
+          title: newTemplateTitle.trim(),
+          body: newTemplateBody.trim(),
+        });
+        setTemplates((prev) => [...prev, created]);
+        setAddingTemplate(false);
+        setNewTemplateTitle("");
+        setNewTemplateBody("");
+        toast.success("Template criado.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao criar template");
+      }
+    });
+  }
+
+  function startEditTemplate(t: WhatsappTemplate) {
+    setEditingTemplateId(t.id);
+    setEditTemplateTitle(t.title);
+    setEditTemplateBody(t.body);
+  }
+
+  function handleSaveTemplate(templateId: string) {
+    startTransition(async () => {
+      try {
+        await updateMessageTemplate({
+          id: templateId,
+          projectId: project.id,
+          title: editTemplateTitle,
+          body: editTemplateBody,
+        });
+        setTemplates((prev) =>
+          prev.map((t) =>
+            t.id === templateId ? { ...t, title: editTemplateTitle, body: editTemplateBody } : t,
+          ),
+        );
+        setEditingTemplateId(null);
+        toast.success("Template atualizado.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao atualizar template");
+      }
+    });
+  }
+
+  function handleDeleteTemplate(templateId: string) {
+    startTransition(async () => {
+      try {
+        await deleteMessageTemplate({ id: templateId, projectId: project.id });
+        setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+        setDeletingTemplateId(null);
+        toast.success("Template removido.");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao remover template");
+        setDeletingTemplateId(null);
       }
     });
   }
@@ -648,6 +734,164 @@ export function SettingsForm({ project, stages: initialStages, members: initialM
             <p className="text-sm text-zinc-600 py-2">Nenhum membro neste projeto ainda.</p>
           )}
         </div>
+      </section>
+
+      {/* WhatsApp templates */}
+      <section className="rounded-xl border border-zinc-800 bg-zinc-950 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <MessageSquareIcon className="h-4 w-4 text-green-500" />
+            <h2 className="text-sm font-semibold text-zinc-300">Templates WhatsApp</h2>
+          </div>
+          {!addingTemplate && (
+            <button
+              type="button"
+              onClick={() => setAddingTemplate(true)}
+              className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 transition-colors"
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              Adicionar
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          {templates.map((template) => (
+            <div key={template.id}>
+              {deletingTemplateId === template.id ? (
+                <div className="flex items-center justify-between rounded-lg border border-red-900/60 bg-red-950/20 px-3 py-2">
+                  <span className="text-sm text-zinc-400">Deletar &ldquo;{template.title}&rdquo;?</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTemplate(template.id)}
+                      className="rounded bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-500 transition-colors"
+                    >
+                      Deletar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeletingTemplateId(null)}
+                      className="rounded border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : editingTemplateId === template.id ? (
+                <div className="rounded-lg border border-indigo-700/60 bg-zinc-900 p-3 space-y-2">
+                  <input
+                    value={editTemplateTitle}
+                    onChange={(e) => setEditTemplateTitle(e.target.value)}
+                    maxLength={100}
+                    placeholder="Título"
+                    className="w-full bg-zinc-800 rounded border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-600"
+                  />
+                  <textarea
+                    value={editTemplateBody}
+                    onChange={(e) => setEditTemplateBody(e.target.value)}
+                    maxLength={1000}
+                    rows={3}
+                    placeholder="Mensagem"
+                    className="w-full bg-zinc-800 rounded border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-600 resize-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingTemplateId(null)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:bg-zinc-700 transition-colors"
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveTemplate(template.id)}
+                      className="flex h-6 w-6 items-center justify-center rounded text-green-500 hover:bg-zinc-700 transition-colors"
+                    >
+                      <CheckIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="group rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-zinc-200">{template.title}</p>
+                      <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{template.body}</p>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => startEditTemplate(template)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-zinc-400 transition-colors"
+                      >
+                        <PencilIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeletingTemplateId(template.id)}
+                        className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2Icon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          {templates.length === 0 && !addingTemplate && (
+            <p className="text-sm text-zinc-600 py-2">Nenhum template criado ainda.</p>
+          )}
+        </div>
+
+        {/* Add template form */}
+        {addingTemplate && (
+          <form
+            onSubmit={handleAddTemplate}
+            className="mt-2 rounded-lg border border-dashed border-zinc-700 bg-zinc-900 p-3 space-y-2"
+          >
+            <input
+              value={newTemplateTitle}
+              onChange={(e) => setNewTemplateTitle(e.target.value)}
+              placeholder="Título do template"
+              maxLength={100}
+              required
+              className="w-full bg-zinc-800 rounded border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-600"
+            />
+            <textarea
+              value={newTemplateBody}
+              onChange={(e) => setNewTemplateBody(e.target.value)}
+              placeholder="Mensagem do template (max 1000 caracteres)"
+              maxLength={1000}
+              rows={3}
+              required
+              className="w-full bg-zinc-800 rounded border border-zinc-700 px-2.5 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-600 resize-none"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-zinc-600">{newTemplateBody.length}/1000</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingTemplate(false);
+                    setNewTemplateTitle("");
+                    setNewTemplateBody("");
+                  }}
+                  className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:bg-zinc-700 transition-colors"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="submit"
+                  className="flex h-6 w-6 items-center justify-center rounded text-green-500 hover:bg-zinc-700 transition-colors"
+                >
+                  <CheckIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </section>
 
       {/* Danger zone */}
