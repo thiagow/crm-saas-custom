@@ -1,8 +1,5 @@
-import { users } from "@/db/schema";
-import { hashPassword } from "@/lib/auth/password";
-import { consumeSetupToken, verifySetupToken } from "@/lib/auth/password-reset";
-import { db } from "@/lib/db/client";
-import { eq } from "drizzle-orm";
+import { setupPasswordAction } from "@/lib/auth/setup-password-action";
+import { verifySetupToken } from "@/lib/auth/password-reset";
 import { redirect } from "next/navigation";
 
 export default async function SetupPasswordPage({
@@ -14,7 +11,6 @@ export default async function SetupPasswordPage({
   const token = params.token ?? "";
   const error = params.error;
 
-  // Validate token server-side before rendering the form
   const tokenData = await verifySetupToken(token);
   if (!tokenData) {
     redirect("/login?error=TokenExpired");
@@ -55,53 +51,15 @@ export default async function SetupPasswordPage({
             <p className="text-sm text-red-400">A senha deve ter no mínimo 8 caracteres.</p>
           </div>
         )}
+        {error === "ServerError" && (
+          <div className="mb-4 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3">
+            <p className="text-sm text-red-400">
+              Erro ao salvar a senha. Tente novamente ou solicite um novo convite.
+            </p>
+          </div>
+        )}
 
-        <form
-          className="space-y-3"
-          action={async (formData: FormData) => {
-            "use server";
-            const rawToken = formData.get("token") as string;
-            const password = formData.get("password") as string;
-            const confirmPassword = formData.get("confirmPassword") as string;
-
-            if (password.length < 8) {
-              redirect(`/setup-password?token=${encodeURIComponent(rawToken)}&error=short`);
-            }
-            if (password !== confirmPassword) {
-              redirect(`/setup-password?token=${encodeURIComponent(rawToken)}&error=mismatch`);
-            }
-
-            // Re-verify token inside the action (prevents replay after expiry)
-            const data = await verifySetupToken(rawToken);
-            if (!data) {
-              redirect("/login?error=TokenExpired");
-            }
-
-            const passwordHash = await hashPassword(password);
-            const now = new Date();
-
-            const existing = await db.query.users.findFirst({
-              where: eq(users.email, data.email),
-              columns: { id: true },
-            });
-
-            if (existing) {
-              await db
-                .update(users)
-                .set({ passwordHash, updatedAt: now })
-                .where(eq(users.id, existing.id));
-            } else {
-              await db.insert(users).values({
-                email: data.email,
-                passwordHash,
-                emailVerified: now,
-              });
-            }
-
-            await consumeSetupToken(rawToken);
-            redirect("/login?success=PasswordSet");
-          }}
-        >
+        <form className="space-y-3" action={setupPasswordAction}>
           <input type="hidden" name="token" value={token} />
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-zinc-400 mb-1.5">
