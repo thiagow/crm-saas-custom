@@ -68,6 +68,11 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
       processed: undefined,
       pageToken: undefined,
     });
+
+    // pg-boss v10: send() returns null se a fila nao existe. Tratar como erro critico.
+    if (jobId === null) {
+      throw new Error("Fila de jobs nao disponível — boss.send() retornou null. Job scheduler pode nao estar rodando.");
+    }
   } catch (sendErr) {
     // Enfileiramento falhou — marcar como failed para evitar registro órfão
     console.error("[extraction] boss.send() failed:", sendErr);

@@ -17,6 +17,7 @@ export default auth((req: NextAuthRequest) => {
     pathname === "/forgot-password" ||
     pathname === "/setup-password" ||
     pathname === "/api/health" ||
+    pathname === "/api/internal/job-worker" ||
     pathname.startsWith("/api/auth");
 
   if (!isPublic && !isAuthenticated) {
