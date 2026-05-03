@@ -1,10 +1,9 @@
 import { UsersPanel } from "@/components/settings/users-panel";
 import { auth } from "@/lib/auth";
 import { getPendingInvites, getUsers } from "@/lib/users/actions";
-import { getProjects } from "@/lib/projects/actions";
 import { db } from "@/lib/db/client";
-import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { projects, users } from "@/db/schema";
+import { eq, isNull } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
 export const metadata = { title: "Usuários — Gestão de acesso" };
@@ -23,7 +22,11 @@ export default async function UsersSettingsPage() {
   const [allUsers, pendingInvites, allProjects] = await Promise.all([
     getUsers(),
     getPendingInvites(),
-    getProjects(),
+    db.query.projects.findMany({
+      where: isNull(projects.archivedAt),
+      columns: { id: true, name: true, slug: true },
+      orderBy: (p, { asc }) => [asc(p.name)],
+    }),
   ]);
 
   return (
