@@ -34,10 +34,12 @@ export default async function UserProjectsPage({
       where: isNull(projects.archivedAt),
       columns: { id: true, name: true, slug: true, type: true },
       orderBy: (p, { asc }) => [asc(p.name)],
+      limit: 500,
     }),
     db.query.projectMembers.findMany({
       where: eq(projectMembers.userId, userId),
       columns: { id: true, projectId: true, role: true },
+      limit: 1000,
     }),
   ]);
 

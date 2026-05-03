@@ -24,6 +24,7 @@ export default async function UsersSettingsPage() {
     db.query.users.findMany({
       columns: { id: true, name: true, email: true, isOwner: true, isActive: true, createdAt: true },
       orderBy: (t, { desc }) => [desc(t.createdAt)],
+      limit: 500,
     }),
     db.query.invites.findMany({
       where: and(isNull(invites.acceptedAt), gt(invites.expiresAt, now)),
@@ -32,11 +33,13 @@ export default async function UsersSettingsPage() {
         project: { columns: { name: true, slug: true } },
       },
       orderBy: (t, { desc }) => [desc(t.createdAt)],
+      limit: 200,
     }),
     db.query.projects.findMany({
       where: isNull(projects.archivedAt),
       columns: { id: true, name: true, slug: true },
       orderBy: (p, { asc }) => [asc(p.name)],
+      limit: 500,
     }),
   ]);
 

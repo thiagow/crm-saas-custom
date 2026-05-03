@@ -1,6 +1,6 @@
 "use server";
 
-import { invites, projectMembers, projects, users } from "@/db/schema";
+import { invites, projectMembers, users } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { createSetupToken } from "@/lib/auth/password-reset";
 import { db } from "@/lib/db/client";
@@ -24,38 +24,6 @@ async function requireOwner() {
   if (!user?.isOwner) throw new Error("Forbidden: owner only");
 
   return session.user.id;
-}
-
-// ─── Queries ─────────────────────────────────────────────────────────────────
-
-export async function getUsers() {
-  await requireOwner();
-
-  return db.query.users.findMany({
-    columns: {
-      id: true,
-      name: true,
-      email: true,
-      isOwner: true,
-      isActive: true,
-      createdAt: true,
-    },
-    orderBy: (t, { desc }) => [desc(t.createdAt)],
-  });
-}
-
-export async function getPendingInvites() {
-  await requireOwner();
-
-  const now = new Date();
-  return db.query.invites.findMany({
-    where: and(isNull(invites.acceptedAt), gt(invites.expiresAt, now)),
-    with: {
-      invitedBy: { columns: { name: true, email: true } },
-      project: { columns: { name: true, slug: true } },
-    },
-    orderBy: (t, { desc }) => [desc(t.createdAt)],
-  });
 }
 
 // ─── Invite user ─────────────────────────────────────────────────────────────
@@ -196,40 +164,6 @@ export async function revokeInvite(input: z.infer<typeof revokeInviteSchema>) {
   await db.delete(invites).where(eq(invites.id, inviteId));
 
   revalidatePath("/settings/users");
-}
-
-// ─── User project memberships ─────────────────────────────────────────────────
-
-export async function getUserProjectMemberships(userId: string) {
-  await requireOwner();
-
-  const [targetUser, allProjects, memberships] = await Promise.all([
-    db.query.users.findFirst({
-      where: eq(users.id, userId),
-      columns: { id: true, name: true, email: true, isOwner: true, isActive: true },
-    }),
-    db.query.projects.findMany({
-      where: isNull(projects.archivedAt),
-      columns: { id: true, name: true, slug: true, type: true },
-      orderBy: (p, { asc }) => [asc(p.name)],
-    }),
-    db.query.projectMembers.findMany({
-      where: eq(projectMembers.userId, userId),
-      columns: { id: true, projectId: true, role: true },
-    }),
-  ]);
-
-  if (!targetUser) throw new Error("Usuário não encontrado");
-
-  const membershipMap = new Map(memberships.map((m) => [m.projectId, m]));
-
-  return {
-    user: targetUser,
-    projects: allProjects.map((p) => ({
-      ...p,
-      membership: membershipMap.get(p.id) ?? null,
-    })),
-  };
 }
 
 const setProjectAccessSchema = z.object({
