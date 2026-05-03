@@ -19,14 +19,14 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1745452800000,
+      "when": 1777800000000,
       "tag": "0002_whatsapp_templates",
       "breakpoints": true
     },
     {
       "idx": 3,
       "version": "7",
-      "when": 1745452900000,
+      "when": 1777800001000,
       "tag": "0003_password_auth",
       "breakpoints": true
     }
