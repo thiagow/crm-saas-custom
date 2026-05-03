@@ -24,9 +24,16 @@ type PendingInvite = {
   invitedBy: { name: string | null; email: string | null } | null;
 };
 
+type Project = {
+  id: string;
+  name: string;
+  slug: string;
+};
+
 interface Props {
   users: User[];
   pendingInvites: PendingInvite[];
+  projects: Project[];
 }
 
 const ROLES = ["owner", "admin", "sales", "viewer"] as const;
@@ -39,7 +46,7 @@ const ROLE_LABELS: Record<Role, string> = {
   viewer: "Visualizador",
 };
 
-export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites }: Props) {
+export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites, projects }: Props) {
   const [users, setUsers] = useState(initialUsers);
   const [invites, setInvites] = useState(initialInvites);
   const [, startTransition] = useTransition();
@@ -47,6 +54,7 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
   // Invite form state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Role>("sales");
+  const [inviteProjectId, setInviteProjectId] = useState<string>("");
   const [showInviteForm, setShowInviteForm] = useState(false);
 
   function handleToggleActive(userId: string, currentActive: boolean) {
@@ -68,24 +76,31 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
     if (!inviteEmail.trim()) return;
     startTransition(async () => {
       try {
-        const result = await inviteUser({ email: inviteEmail.trim(), role: inviteRole });
+        const result = await inviteUser({
+          email: inviteEmail.trim(),
+          role: inviteRole,
+          projectId: inviteProjectId || undefined,
+        });
         if (result.status === "already_user") {
           toast.success("Usuário já existe no sistema.");
         } else {
           toast.success("Convite enviado com sucesso.");
-          // Optimistically add to pending invites
           if (result.invite) {
+            const selectedProject = projects.find((p) => p.id === inviteProjectId);
             setInvites((prev) => [
               {
                 ...result.invite,
                 invitedBy: { name: null, email: null },
-                project: null,
+                project: selectedProject
+                  ? { name: selectedProject.name, slug: selectedProject.slug }
+                  : null,
               } as PendingInvite,
               ...prev,
             ]);
           }
         }
         setInviteEmail("");
+        setInviteProjectId("");
         setShowInviteForm(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao convidar");
@@ -132,21 +147,34 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
             <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
               Convidar usuário
             </h3>
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="email@exemplo.com"
+              required
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+            />
             <div className="flex gap-2">
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="email@exemplo.com"
-                required
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-              />
+              <select
+                value={inviteProjectId}
+                onChange={(e) => setInviteProjectId(e.target.value)}
+                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+              >
+                <option value="">Nenhum projeto</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
               <select
                 value={inviteRole}
                 onChange={(e) => setInviteRole(e.target.value as Role)}
-                className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
+                disabled={!inviteProjectId}
+                className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors disabled:opacity-40"
               >
-                {ROLES.map((r) => (
+                {ROLES.filter((r) => r !== "owner").map((r) => (
                   <option key={r} value={r}>
                     {ROLE_LABELS[r]}
                   </option>

@@ -1,6 +1,7 @@
 import { UsersPanel } from "@/components/settings/users-panel";
 import { auth } from "@/lib/auth";
 import { getPendingInvites, getUsers } from "@/lib/users/actions";
+import { getProjects } from "@/lib/projects/actions";
 import { db } from "@/lib/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -19,7 +20,11 @@ export default async function UsersSettingsPage() {
   });
   if (!currentUser?.isOwner) redirect("/");
 
-  const [allUsers, pendingInvites] = await Promise.all([getUsers(), getPendingInvites()]);
+  const [allUsers, pendingInvites, allProjects] = await Promise.all([
+    getUsers(),
+    getPendingInvites(),
+    getProjects(),
+  ]);
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
@@ -31,7 +36,7 @@ export default async function UsersSettingsPage() {
         </p>
       </div>
 
-      <UsersPanel users={allUsers} pendingInvites={pendingInvites} />
+      <UsersPanel users={allUsers} pendingInvites={pendingInvites} projects={allProjects} />
     </div>
   );
 }
