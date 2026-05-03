@@ -1,0 +1,49 @@
+import { UserProjectsPanel } from "@/components/settings/user-projects-panel";
+import { auth } from "@/lib/auth";
+import { getUserProjectMemberships } from "@/lib/users/actions";
+import { db } from "@/lib/db/client";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { ChevronLeftIcon } from "lucide-react";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+
+export const metadata = { title: "Acesso a projetos" };
+
+export default async function UserProjectsPage({
+  params,
+}: {
+  params: Promise<{ userId: string }>;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/login");
+
+  const currentUser = await db.query.users.findFirst({
+    where: eq(users.id, session.user.id),
+    columns: { isOwner: true },
+  });
+  if (!currentUser?.isOwner) redirect("/");
+
+  const { userId } = await params;
+  const data = await getUserProjectMemberships(userId);
+
+  return (
+    <div className="max-w-2xl mx-auto py-8 px-4">
+      <div className="mb-6">
+        <Link
+          href="/settings/users"
+          className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors mb-4"
+        >
+          <ChevronLeftIcon className="h-3.5 w-3.5" />
+          Usuários
+        </Link>
+        <h1 className="text-xl font-semibold text-zinc-100">
+          {data.user.name ?? data.user.email}
+        </h1>
+        <p className="text-sm text-zinc-500 mt-1">{data.user.email}</p>
+      </div>
+
+      <UserProjectsPanel userId={userId} projects={data.projects} />
+    </div>
+  );
+}

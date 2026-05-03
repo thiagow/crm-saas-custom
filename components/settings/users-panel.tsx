@@ -1,7 +1,8 @@
 "use client";
 
 import { inviteUser, revokeInvite, setUserActive } from "@/lib/users/actions";
-import { MailIcon, PlusIcon, ShieldOffIcon, Trash2Icon, UserCheckIcon } from "lucide-react";
+import { FolderOpenIcon, MailIcon, PlusIcon, ShieldOffIcon, Trash2Icon, UserCheckIcon } from "lucide-react";
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -209,6 +210,17 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
                   </span>
                 )}
               </div>
+
+              {/* Manage project access */}
+              {!user.isOwner && (
+                <Link
+                  href={`/settings/users/${user.id}`}
+                  title="Gerenciar projetos"
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-indigo-400 transition-colors"
+                >
+                  <FolderOpenIcon className="h-3.5 w-3.5" />
+                </Link>
+              )}
 
               {/* Toggle active (can't deactivate owners) */}
               {!user.isOwner && (

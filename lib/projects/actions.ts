@@ -61,15 +61,20 @@ export async function createProject(input: z.infer<typeof createProjectSchema>) 
 }
 
 export async function getProjects(userId?: string) {
-  const resolvedUserId = userId ?? (await auth())?.user?.id;
+  const session = await auth();
+  const resolvedUserId = userId ?? session?.user?.id;
   if (!resolvedUserId) throw new Error("Unauthorized");
 
-  // Get projects where user is a member (or all projects if owner)
+  if (getIsOwner(session)) {
+    return db.query.projects.findMany({
+      where: isNull(projects.archivedAt),
+      orderBy: (p, { asc }) => [asc(p.name)],
+    });
+  }
+
   const memberships = await db.query.projectMembers.findMany({
     where: eq(projectMembers.userId, resolvedUserId),
-    with: {
-      project: true,
-    },
+    with: { project: true },
   });
 
   return memberships
