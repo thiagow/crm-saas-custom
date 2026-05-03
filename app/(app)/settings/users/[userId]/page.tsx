@@ -1,9 +1,8 @@
 import { UserProjectsPanel } from "@/components/settings/user-projects-panel";
 import { auth } from "@/lib/auth";
-import { getUserProjectMemberships } from "@/lib/users/actions";
 import { db } from "@/lib/db/client";
-import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { projectMembers, projects, users } from "@/db/schema";
+import { eq, isNull } from "drizzle-orm";
 import { ChevronLeftIcon } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -25,7 +24,30 @@ export default async function UserProjectsPage({
   if (!currentUser?.isOwner) redirect("/");
 
   const { userId } = await params;
-  const data = await getUserProjectMemberships(userId);
+
+  const [targetUser, allProjects, memberships] = await Promise.all([
+    db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { id: true, name: true, email: true },
+    }),
+    db.query.projects.findMany({
+      where: isNull(projects.archivedAt),
+      columns: { id: true, name: true, slug: true, type: true },
+      orderBy: (p, { asc }) => [asc(p.name)],
+    }),
+    db.query.projectMembers.findMany({
+      where: eq(projectMembers.userId, userId),
+      columns: { id: true, projectId: true, role: true },
+    }),
+  ]);
+
+  if (!targetUser) redirect("/settings/users");
+
+  const membershipMap = new Map(memberships.map((m) => [m.projectId, m]));
+  const projectsWithMembership = allProjects.map((p) => ({
+    ...p,
+    membership: membershipMap.get(p.id) ?? null,
+  }));
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
@@ -38,12 +60,12 @@ export default async function UserProjectsPage({
           Usuários
         </Link>
         <h1 className="text-xl font-semibold text-zinc-100">
-          {data.user.name ?? data.user.email}
+          {targetUser.name ?? targetUser.email}
         </h1>
-        <p className="text-sm text-zinc-500 mt-1">{data.user.email}</p>
+        <p className="text-sm text-zinc-500 mt-1">{targetUser.email}</p>
       </div>
 
-      <UserProjectsPanel userId={userId} projects={data.projects} />
+      <UserProjectsPanel userId={userId} projects={projectsWithMembership} />
     </div>
   );
 }

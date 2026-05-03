@@ -1,9 +1,8 @@
 import { UsersPanel } from "@/components/settings/users-panel";
 import { auth } from "@/lib/auth";
-import { getPendingInvites, getUsers } from "@/lib/users/actions";
 import { db } from "@/lib/db/client";
-import { projects, users } from "@/db/schema";
-import { eq, isNull } from "drizzle-orm";
+import { invites, projects, users } from "@/db/schema";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
 export const metadata = { title: "Usuários — Gestão de acesso" };
@@ -19,9 +18,21 @@ export default async function UsersSettingsPage() {
   });
   if (!currentUser?.isOwner) redirect("/");
 
+  const now = new Date();
+
   const [allUsers, pendingInvites, allProjects] = await Promise.all([
-    getUsers(),
-    getPendingInvites(),
+    db.query.users.findMany({
+      columns: { id: true, name: true, email: true, isOwner: true, isActive: true, createdAt: true },
+      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    }),
+    db.query.invites.findMany({
+      where: and(isNull(invites.acceptedAt), gt(invites.expiresAt, now)),
+      with: {
+        invitedBy: { columns: { name: true, email: true } },
+        project: { columns: { name: true, slug: true } },
+      },
+      orderBy: (t, { desc }) => [desc(t.createdAt)],
+    }),
     db.query.projects.findMany({
       where: isNull(projects.archivedAt),
       columns: { id: true, name: true, slug: true },
