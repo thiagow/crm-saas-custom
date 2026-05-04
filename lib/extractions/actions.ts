@@ -327,3 +327,51 @@ export async function discardResults(input: { resultIds: string[]; projectSlug: 
 
   revalidatePath(`/${input.projectSlug}/triage`);
 }
+
+const updateExtractionResultSchema = z.object({
+  resultId: z.string(),
+  projectSlug: z.string(),
+  name: z.string().min(1).max(200),
+  phone: z.string().max(50).optional().or(z.literal("")),
+  website: z.string().url().optional().or(z.literal("")),
+  instagramHandle: z.string().max(100).optional().or(z.literal("")),
+  city: z.string().max(100).optional().or(z.literal("")),
+  state: z.string().max(50).optional().or(z.literal("")),
+});
+
+export async function updateExtractionResult(input: z.infer<typeof updateExtractionResultSchema>) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const data = updateExtractionResultSchema.parse(input);
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, data.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
+
+  const result = await db.query.extractionResults.findFirst({
+    where: and(
+      eq(extractionResults.id, data.resultId),
+      eq(extractionResults.projectId, project.id),
+      eq(extractionResults.status, "pending"),
+    ),
+    columns: { id: true },
+  });
+  if (!result) throw new Error("Result not found or not editable");
+
+  await db
+    .update(extractionResults)
+    .set({
+      name: data.name,
+      phone: data.phone || null,
+      website: data.website || null,
+      instagramHandle: data.instagramHandle || null,
+      city: data.city || null,
+      state: data.state || null,
+    })
+    .where(eq(extractionResults.id, data.resultId));
+}

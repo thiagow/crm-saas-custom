@@ -6,6 +6,7 @@ import {
   discardResults,
   getTriageResults,
   promoteResultsToLeads,
+  updateExtractionResult,
 } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +43,18 @@ export function TriageTable({
   const [hasInstagram, setHasInstagram] = useState(false);
   const [minRating, setMinRating] = useState<number | undefined>();
   const [orderBy, setOrderBy] = useState<"rating" | "reviews" | "name">("rating");
+
+  // Edit modal
+  const [editingResult, setEditingResult] = useState<TriageResult | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    phone: "",
+    website: "",
+    instagramHandle: "",
+    city: "",
+    state: "",
+  });
+  const [editPending, startEditTransition] = useTransition();
 
   const loadResults = useCallback(async () => {
     setLoading(true);
@@ -84,6 +97,60 @@ export function TriageTable({
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function openEditModal(result: TriageResult, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditForm({
+      name: result.name ?? "",
+      phone: result.phone ?? "",
+      website: result.website ?? "",
+      instagramHandle: result.instagramHandle ?? "",
+      city: result.city ?? "",
+      state: result.state ?? "",
+    });
+    setEditingResult(result);
+  }
+
+  function closeEditModal() {
+    setEditingResult(null);
+  }
+
+  function handleSaveEdit() {
+    if (!editingResult) return;
+    startEditTransition(async () => {
+      try {
+        const website =
+          editForm.website && !/^https?:\/\//i.test(editForm.website)
+            ? `https://${editForm.website}`
+            : editForm.website;
+        await updateExtractionResult({
+          resultId: editingResult.id,
+          projectSlug,
+          ...editForm,
+          website,
+        });
+        setResults((prev) =>
+          prev.map((r) =>
+            r.id === editingResult.id
+              ? {
+                  ...r,
+                  name: editForm.name,
+                  phone: editForm.phone || null,
+                  website: editForm.website || null,
+                  instagramHandle: editForm.instagramHandle || null,
+                  city: editForm.city || null,
+                  state: editForm.state || null,
+                }
+              : r,
+          ),
+        );
+        toast.success("Informações atualizadas");
+        closeEditModal();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao salvar");
+      }
     });
   }
 
@@ -249,6 +316,7 @@ export function TriageTable({
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
                   Instagram
                 </th>
+                <th className="p-3 w-10" />
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
@@ -257,7 +325,7 @@ export function TriageTable({
                   key={result.id}
                   onClick={() => toggleOne(result.id)}
                   className={cn(
-                    "cursor-pointer transition-colors",
+                    "cursor-pointer transition-colors group",
                     selected.has(result.id)
                       ? "bg-indigo-500/5"
                       : "hover:bg-zinc-900/50",
@@ -327,12 +395,89 @@ export function TriageTable({
                       <span className="text-xs text-zinc-700">—</span>
                     )}
                   </td>
+                  <td className="p-3 w-10" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={(e) => openEditModal(result, e)}
+                      className="opacity-0 group-hover:opacity-100 rounded p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 transition-all"
+                      title="Editar informações"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <path d="M3 17.25V21h3.75L17.81 9.94m-6.75-6.75l2.5-2.5a2.121 2.121 0 013 3l-2.5 2.5m0 0L9.86 9.86" />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {editingResult && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            onClick={closeEditModal}
+          />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
+            <h2 className="text-base font-semibold text-zinc-100 mb-4">
+              Editar informações
+            </h2>
+            <div className="space-y-3">
+              {[
+                { key: "name", label: "Nome", type: "text" },
+                { key: "phone", label: "Telefone", type: "tel" },
+                { key: "website", label: "Site", type: "url" },
+                {
+                  key: "instagramHandle",
+                  label: "Instagram (sem @)",
+                  type: "text",
+                },
+                { key: "city", label: "Cidade", type: "text" },
+                { key: "state", label: "Estado", type: "text" },
+              ].map(({ key, label, type }) => (
+                <div key={key}>
+                  <label className="block text-xs text-zinc-500 mb-1">
+                    {label}
+                  </label>
+                  <input
+                    type={type}
+                    value={editForm[key as keyof typeof editForm]}
+                    onChange={(e) =>
+                      setEditForm((f) => ({ ...f, [key]: e.target.value }))
+                    }
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={closeEditModal}
+                className="rounded-lg border border-zinc-800 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={editPending || !editForm.name.trim()}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              >
+                {editPending ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
