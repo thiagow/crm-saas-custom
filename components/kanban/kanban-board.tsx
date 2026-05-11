@@ -138,7 +138,16 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
     if (!over) return;
 
     const leadId = active.id as string;
-    const targetStageId = over.id as string;
+    const overId = over.id as string;
+
+    // over.id is a stage ID (dropped on empty column) or a lead ID (dropped on a card)
+    const targetStageId = stages.some((s) => s.id === overId)
+      ? overId
+      : Object.entries(leadsMap).find(([, stageLeads]) =>
+          stageLeads.some((l) => l.id === overId)
+        )?.[0];
+
+    if (!targetStageId) return;
 
     // Find current stage
     let currentStageId: string | undefined;
