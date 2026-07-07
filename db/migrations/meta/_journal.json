@@ -29,6 +29,13 @@
       "when": 1777800001000,
       "tag": "0003_password_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783450168729,
+      "tag": "0004_uneven_lockjaw",
+      "breakpoints": true
     }
   ]
 }
