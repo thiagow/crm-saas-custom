@@ -1,8 +1,10 @@
-import { notFound } from "next/navigation";
-import { db } from "@/lib/db/client";
-import { pipelineStages, projects } from "@/db/schema";
-import { eq, asc, and, isNull } from "drizzle-orm";
 import { TriageTable } from "@/components/extractions/triage-table";
+import { pipelineStages, projects } from "@/db/schema";
+import { auth, getIsOwner } from "@/lib/auth";
+import { db } from "@/lib/db/client";
+import { forProject } from "@/lib/db/for-project";
+import { and, asc, eq, isNull } from "drizzle-orm";
+import { notFound, redirect } from "next/navigation";
 
 interface Props {
   params: Promise<{ project: string }>;
@@ -15,11 +17,18 @@ export default async function TriagePage({ params, searchParams }: Props) {
   const { project: projectSlug } = await params;
   const { extractionId } = await searchParams;
 
+  const session = await auth();
+  if (!session?.user?.id) redirect("/login");
+
   const project = await db.query.projects.findFirst({
     where: and(eq(projects.slug, projectSlug), isNull(projects.archivedAt)),
     columns: { id: true },
   });
   if (!project) notFound();
+
+  // Membership check — without this, any authenticated user who guesses a slug
+  // could see another project's pipeline stage names/colors below.
+  await forProject(project.id, session.user.id, getIsOwner(session));
 
   const stages = await db.query.pipelineStages.findMany({
     where: eq(pipelineStages.projectId, project.id),

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { toast } from "sonner";
 import { createExtraction } from "@/lib/extractions/actions";
 import { estimateCost } from "@/lib/extractions/utils";
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
 
 interface NewExtractionButtonProps {
   projectSlug: string;
@@ -27,6 +27,7 @@ export function NewExtractionButton({ projectSlug }: NewExtractionButtonProps) {
           city: data.get("city") as string,
           state: data.get("state") as string,
           maxResults: Number(data.get("maxResults")),
+          enrichContacts: true,
         });
         setOpen(false);
         toast.success("Extração iniciada! Aguarde os resultados.");

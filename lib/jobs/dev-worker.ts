@@ -12,14 +12,14 @@
  * Started from instrumentation.ts only when NODE_ENV === "development".
  */
 import { getBoss } from "./boss";
-import { processExtractionPage } from "@/lib/google-places/job-handler";
-import type { ExtractionStartJobData } from "@/lib/google-places/job-handler";
+import { JOB_HANDLERS, JOB_QUEUES } from "./handlers";
 
 const POLL_INTERVAL_MS = 2_000;
 const BATCH_SIZE = 5;
-const QUEUES = ["extraction:start", "extraction:page"] as const;
 
-const g = globalThis as unknown as { __devWorkerInterval?: ReturnType<typeof setInterval> | undefined };
+const g = globalThis as unknown as {
+  __devWorkerInterval?: ReturnType<typeof setInterval> | undefined;
+};
 
 export async function startDevWorker() {
   // Clear any existing worker left over from a previous HMR cycle
@@ -40,9 +40,9 @@ export async function startDevWorker() {
       return;
     }
 
-    for (const queue of QUEUES) {
+    for (const queue of JOB_QUEUES) {
       try {
-        const jobs = await boss.fetch<ExtractionStartJobData>(queue, { batchSize: BATCH_SIZE });
+        const jobs = await boss.fetch(queue, { batchSize: BATCH_SIZE });
         if (!jobs || jobs.length === 0) continue;
 
         console.log(`[dev-worker] processing ${jobs.length} job(s) from "${queue}"`);
@@ -50,7 +50,7 @@ export async function startDevWorker() {
         await Promise.allSettled(
           jobs.map(async (job) => {
             try {
-              await processExtractionPage(job.data);
+              await JOB_HANDLERS[queue](job.data);
               await boss.complete(queue, job.id);
               console.log(`[dev-worker] job ${job.id} completed`);
             } catch (err) {
@@ -59,7 +59,7 @@ export async function startDevWorker() {
                 message: err instanceof Error ? err.message : String(err),
               });
             }
-          })
+          }),
         );
       } catch (err) {
         console.error(`[dev-worker] error polling "${queue}":`, err);

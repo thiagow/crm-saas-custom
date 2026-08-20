@@ -14,26 +14,26 @@
  */
 import type { Config, Handler } from "@netlify/functions";
 import { getBoss } from "../../lib/jobs/boss";
-import { processExtractionPage } from "../../lib/google-places/job-handler";
-import type { ExtractionStartJobData } from "../../lib/google-places/job-handler";
+import { JOB_HANDLERS, JOB_QUEUES } from "../../lib/jobs/handlers";
 
 const BATCH_SIZE = 5;
-const QUEUES = ["extraction:start", "extraction:page"] as const;
 
 const handler: Handler = async () => {
   const boss = await getBoss();
 
-  for (const queue of QUEUES) {
-    const jobs = await boss.fetch<ExtractionStartJobData>(queue, { batchSize: BATCH_SIZE });
+  for (const queue of JOB_QUEUES) {
+    const jobs = await boss.fetch(queue, { batchSize: BATCH_SIZE });
     if (!jobs || jobs.length === 0) continue;
 
     for (const job of jobs) {
       try {
-        await processExtractionPage(job.data);
+        await JOB_HANDLERS[queue](job.data);
         await boss.complete(queue, job.id);
       } catch (err) {
         console.error(`[job-worker] job ${job.id} (${queue}) failed:`, err);
-        await boss.fail(queue, job.id, { message: err instanceof Error ? err.message : String(err) });
+        await boss.fail(queue, job.id, {
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
