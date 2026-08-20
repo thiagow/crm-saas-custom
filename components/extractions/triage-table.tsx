@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { deepEnrichResults, getEnrichmentStatus } from "@/lib/enrichment/actions";
 import {
   discardResults,
   getTriageResults,
@@ -9,6 +8,8 @@ import {
   updateExtractionResult,
 } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 type TriageResult = Awaited<ReturnType<typeof getTriageResults>>[number];
 
@@ -41,6 +42,7 @@ export function TriageTable({
   const [hasPhone, setHasPhone] = useState(false);
   const [hasSite, setHasSite] = useState(false);
   const [hasInstagram, setHasInstagram] = useState(false);
+  const [hasEmail, setHasEmail] = useState(false);
   const [minRating, setMinRating] = useState<number | undefined>();
   const [orderBy, setOrderBy] = useState<"rating" | "reviews" | "name">("rating");
 
@@ -65,6 +67,7 @@ export function TriageTable({
         hasPhone: hasPhone || undefined,
         hasSite: hasSite || undefined,
         hasInstagram: hasInstagram || undefined,
+        hasEmail: hasEmail || undefined,
         minRating,
         orderBy,
         page: 1,
@@ -77,7 +80,16 @@ export function TriageTable({
     } finally {
       setLoading(false);
     }
-  }, [projectSlug, initialExtractionId, hasPhone, hasSite, hasInstagram, minRating, orderBy]);
+  }, [
+    projectSlug,
+    initialExtractionId,
+    hasPhone,
+    hasSite,
+    hasInstagram,
+    hasEmail,
+    minRating,
+    orderBy,
+  ]);
 
   useEffect(() => {
     void loadResults();
@@ -158,12 +170,16 @@ export function TriageTable({
     if (selected.size === 0) return;
     startTransition(async () => {
       try {
-        const { promoted } = await promoteResultsToLeads({
+        const { promoted, alreadyExisted } = await promoteResultsToLeads({
           projectSlug,
           resultIds: Array.from(selected),
           stageId: targetStageId,
         });
-        toast.success(`${promoted} leads criados no Kanban`);
+        toast.success(
+          alreadyExisted > 0
+            ? `${promoted} leads criados · ${alreadyExisted} já existiam`
+            : `${promoted} leads criados no Kanban`,
+        );
         await loadResults();
       } catch {
         toast.error("Erro ao promover leads");
@@ -180,6 +196,70 @@ export function TriageTable({
         await loadResults();
       } catch {
         toast.error("Erro ao descartar");
+      }
+    });
+  }
+
+  // ─── "Pesquisa profunda" (CNPJ/QSA owner lookup) ─────────────────────────────
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  const pollDeepSearchStatus = useCallback(
+    (ids: string[]) => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      const startedAt = Date.now();
+
+      pollIntervalRef.current = setInterval(async () => {
+        if (Date.now() - startedAt > 3 * 60 * 1000) {
+          clearInterval(pollIntervalRef.current);
+          return;
+        }
+        try {
+          const statuses = await getEnrichmentStatus({ projectSlug, resultIds: ids });
+          setResults((prev) =>
+            prev.map((r) => {
+              const s = statuses.find((x) => x.id === r.id);
+              return s ? { ...r, ...s } : r;
+            }),
+          );
+          const stillInFlight = statuses.some(
+            (s) => s.deepStatus === "queued" || s.deepStatus === "running",
+          );
+          if (!stillInFlight) clearInterval(pollIntervalRef.current);
+        } catch {
+          clearInterval(pollIntervalRef.current);
+        }
+      }, 4000);
+    },
+    [projectSlug],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
+  function runDeepSearch(resultIds: string[]) {
+    if (resultIds.length === 0) return;
+    setResults((prev) =>
+      prev.map((r) => (resultIds.includes(r.id) ? { ...r, deepStatus: "queued" } : r)),
+    );
+    startTransition(async () => {
+      try {
+        const { queued, skipped } = await deepEnrichResults({ projectSlug, resultIds });
+        if (queued > 0) {
+          toast.success(
+            queued === 1
+              ? "Pesquisa profunda iniciada"
+              : `Pesquisa profunda iniciada para ${queued} resultados`,
+          );
+          pollDeepSearchStatus(resultIds);
+        }
+        if (skipped > 0 && queued === 0) {
+          toast.info("Já em andamento");
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao iniciar pesquisa profunda");
       }
     });
   }
@@ -218,6 +298,14 @@ export function TriageTable({
               </button>
               <button
                 type="button"
+                onClick={() => runDeepSearch(Array.from(selected))}
+                title="Busca nome do dono/responsável via CNPJ (Receita Federal)"
+                className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-indigo-700 hover:text-indigo-300 transition-colors"
+              >
+                Pesquisa profunda ({selected.size})
+              </button>
+              <button
+                type="button"
                 onClick={handleDiscard}
                 className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-red-800 hover:text-red-400 transition-colors"
               >
@@ -230,6 +318,7 @@ export function TriageTable({
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap">
           {[
+            { label: "Tem e-mail", value: hasEmail, set: setHasEmail },
             { label: "Tem telefone", value: hasPhone, set: setHasPhone },
             { label: "Tem site", value: hasSite, set: setHasSite },
             { label: "Tem Instagram", value: hasInstagram, set: setHasInstagram },
@@ -254,9 +343,7 @@ export function TriageTable({
               max={5}
               step={0.1}
               value={minRating ?? ""}
-              onChange={(e) =>
-                setMinRating(e.target.value ? Number(e.target.value) : undefined)
-              }
+              onChange={(e) => setMinRating(e.target.value ? Number(e.target.value) : undefined)}
               placeholder="—"
               className="w-14 rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
@@ -316,6 +403,12 @@ export function TriageTable({
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
                   Instagram
                 </th>
+                <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Google Maps
+                </th>
+                <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Dono
+                </th>
                 <th className="p-3 w-10" />
               </tr>
             </thead>
@@ -326,9 +419,7 @@ export function TriageTable({
                   onClick={() => toggleOne(result.id)}
                   className={cn(
                     "cursor-pointer transition-colors group",
-                    selected.has(result.id)
-                      ? "bg-indigo-500/5"
-                      : "hover:bg-zinc-900/50",
+                    selected.has(result.id) ? "bg-indigo-500/5" : "hover:bg-zinc-900/50",
                   )}
                 >
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>
@@ -349,16 +440,29 @@ export function TriageTable({
                     {result.city}, {result.state}
                   </td>
                   <td className="p-3">
-                    {result.phone && (
-                      <p className="text-xs text-zinc-400">{result.phone}</p>
+                    {result.email && (
+                      <p className="text-xs text-zinc-300 truncate max-w-40">{result.email}</p>
                     )}
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      {result.phone && (
+                        <span className="text-xs text-zinc-500">{result.phone}</span>
+                      )}
+                      {result.whatsappStatus === "likely" && (
+                        <span
+                          title="Provável WhatsApp (heurística por formato do número)"
+                          className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400"
+                        >
+                          WhatsApp
+                        </span>
+                      )}
+                    </div>
                     {result.website && (
                       <a
                         href={result.website}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 truncate block max-w-32"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 truncate block max-w-32 mt-0.5"
                       >
                         {result.website.replace(/^https?:\/\//, "")}
                       </a>
@@ -395,6 +499,57 @@ export function TriageTable({
                       <span className="text-xs text-zinc-700">—</span>
                     )}
                   </td>
+                  <td className="p-3">
+                    {result.isOnGoogleMaps ? (
+                      result.googleMapsUrl ? (
+                        <a
+                          href={result.googleMapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-zinc-400 hover:text-indigo-400 transition-colors"
+                        >
+                          Ver no Maps ↗
+                        </a>
+                      ) : (
+                        <span className="text-xs text-zinc-500">Sim</span>
+                      )
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                    {result.ownerName ? (
+                      <div>
+                        <p className="text-xs text-zinc-300">{result.ownerName}</p>
+                        {result.ownerRole && (
+                          <p className="text-[10px] text-zinc-600">{result.ownerRole}</p>
+                        )}
+                      </div>
+                    ) : result.deepStatus === "queued" || result.deepStatus === "running" ? (
+                      <span className="flex items-center gap-1.5 text-xs text-indigo-400">
+                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+                        {result.deepStatus === "queued" ? "Na fila…" : "Buscando…"}
+                      </span>
+                    ) : result.deepStatus === "failed" || result.deepStatus === "partial" ? (
+                      <button
+                        type="button"
+                        onClick={() => runDeepSearch([result.id])}
+                        title={result.deepError ?? "Tentar de novo"}
+                        className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                      >
+                        Não encontrado · tentar de novo
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => runDeepSearch([result.id])}
+                        className="text-xs text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-indigo-400 transition-all"
+                      >
+                        Pesquisa profunda
+                      </button>
+                    )}
+                  </td>
                   <td className="p-3 w-10" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
@@ -422,14 +577,9 @@ export function TriageTable({
 
       {editingResult && (
         <>
-          <div
-            className="fixed inset-0 z-40 bg-black/60"
-            onClick={closeEditModal}
-          />
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={closeEditModal} />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
-            <h2 className="text-base font-semibold text-zinc-100 mb-4">
-              Editar informações
-            </h2>
+            <h2 className="text-base font-semibold text-zinc-100 mb-4">Editar informações</h2>
             <div className="space-y-3">
               {[
                 { key: "name", label: "Nome", type: "text" },
@@ -444,15 +594,11 @@ export function TriageTable({
                 { key: "state", label: "Estado", type: "text" },
               ].map(({ key, label, type }) => (
                 <div key={key}>
-                  <label className="block text-xs text-zinc-500 mb-1">
-                    {label}
-                  </label>
+                  <label className="block text-xs text-zinc-500 mb-1">{label}</label>
                   <input
                     type={type}
                     value={editForm[key as keyof typeof editForm]}
-                    onChange={(e) =>
-                      setEditForm((f) => ({ ...f, [key]: e.target.value }))
-                    }
+                    onChange={(e) => setEditForm((f) => ({ ...f, [key]: e.target.value }))}
                     className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-zinc-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>

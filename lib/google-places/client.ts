@@ -60,7 +60,9 @@ export async function searchPlaces(params: {
   pageToken: string | undefined;
   apiKey: string;
 }): Promise<{ places: PlaceBasic[]; nextPageToken: string | undefined; costUsd: number }> {
-  const { query, city, state, radiusMeters, pageToken, apiKey } = params;
+  const { query, city, state, pageToken, apiKey } = params;
+  // radiusMeters is accepted for API-compatibility with callers but intentionally
+  // unused — see the comment below on why we don't turn it into a locationBias.
 
   const body: Record<string, unknown> = {
     textQuery: `${query} em ${city}, ${state}, Brasil`,
@@ -69,15 +71,11 @@ export async function searchPlaces(params: {
     maxResultCount: 20,
   };
 
-  if (radiusMeters) {
-    body.locationBias = {
-      circle: {
-        // Brazil center-ish for radius searches without a specific lat/lng
-        center: { latitude: -15.7801, longitude: -47.9292 },
-        radius: radiusMeters,
-      },
-    };
-  }
+  // Note: radiusMeters is intentionally not turned into a locationBias — doing so
+  // requires a lat/lng center for the searched city, which we don't have here.
+  // The city/state are already part of textQuery above, which Google resolves
+  // correctly on its own; a fake Brazil-wide center would only bias results away
+  // from the intended city.
 
   if (pageToken) {
     body.pageToken = pageToken;
@@ -136,9 +134,11 @@ function parsePlaceResponse(
   const state =
     addressParts[addressParts.length - 2]?.replace(/\s*-\s*\d+.*$/, "").trim() ?? fallbackState;
 
-  const photoUrl = p.photos?.[0]?.name
-    ? `${PLACES_API_BASE}/${p.photos[0].name}/media?maxHeightPx=400&maxWidthPx=600&key=${process.env.GOOGLE_PLACES_API_KEY ?? ""}`
-    : undefined;
+  // Do NOT build a media URL here: that would embed GOOGLE_PLACES_API_KEY in a
+  // value that ends up rendered to the client. The photo resource name (not a
+  // signed URL) is preserved in `raw.photos` for a future authenticated proxy
+  // route to serve server-side.
+  const photoUrl = undefined;
 
   return {
     id: p.id,

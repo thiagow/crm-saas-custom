@@ -29,6 +29,27 @@
       "when": 1777800001000,
       "tag": "0003_password_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787196394292,
+      "tag": "0004_indexes_and_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787197486890,
+      "tag": "0005_apify_enrichment_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787198915431,
+      "tag": "0006_cnpj_owner_lookup",
+      "breakpoints": true
     }
   ]
 }
