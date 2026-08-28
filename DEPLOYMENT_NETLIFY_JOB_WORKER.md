@@ -1,200 +1,136 @@
-# Guia de Deployment — Job Worker para Netlify
+# Job worker — como as extrações são processadas
 
-## TL;DR
-
-Extrações ficam presas em "Na fila" na Netlify porque Scheduled Functions requerem plano Pro. Solução: API route + cron externo gratuito.
-
----
-
-## Problema
-
-O sistema usa `netlify/functions/job-worker.ts` com `schedule: "* * * * *"` para processar jobs de extração. Isso funciona em planos **Pro/Business**, mas em planos **Starter (gratuito)**, a função nunca roda.
-
-**Resultado**: Extrações marcadas com status `"queued"` nunca são processadas.
+Documento único sobre o processamento de jobs de extração. Substitui o antigo
+`EXTRACTION_FIX_SUMMARY.md` (removido), cuja premissa central estava errada.
 
 ---
 
-## Solução implementada
+## Premissa que estava errada (e custou dois meses)
 
-Foram feitos 3 fixes:
+> "Extrações ficam presas em 'Na fila' porque Netlify Scheduled Functions requerem plano Pro."
 
-### 1. Detectar erro silencioso (lib/extractions/actions.ts)
+**Falso.** Scheduled Functions existem em todos os planos, inclusive o free (`nf_team_dev`),
+que é o plano deste site. O plano nunca foi o problema.
 
-`boss.send()` retorna `null` ao invés de lançar exceção quando a fila não existe. Agora detectamos e mostramos erro ao usuário.
+A causa real era de sintaxe. `netlify/functions/job-worker.ts` era assim:
 
-### 2. Nova API route (app/api/internal/job-worker/route.ts)
-
-Endpoint HTTP que pode processar jobs sem Scheduled Functions:
-- **URL**: `POST /api/internal/job-worker`
-- **Auth**: Header `x-worker-secret` (token secreto)
-- **Resposta**: `{ ok: true, jobsProcessed: N }`
-
-### 3. Configuração de secrets (.env.example, .env.local)
-
-`WORKER_SECRET` — token para autenticar a API route.
-
----
-
-## Steps de deployment
-
-### Passo 1: Verificar plano Netlify
-
-1. Abrir https://app.netlify.com
-2. Selecionar seu site
-3. **Settings > Billing & Usage > Current plan**
-4. Se ver **"Starter"** → precisa fazer esses steps (Scheduled Functions não rodam)
-5. Se ver **"Pro/Business"** → pode usar `job-worker.ts` diretamente, mas esta solução é um bom fallback
-
-### Passo 2: Configurar WORKER_SECRET no Netlify
-
-1. No site na Netlify, ir para **Settings > Build & deploy > Environment**
-2. Clique em **Edit variables**
-3. Adicionar nova variável:
-   - **Key**: `WORKER_SECRET`
-   - **Value**: Gerar valor seguro (recomendado: `openssl rand -base64 32`)
-   - Exemplo: `kYrpL7FqK2m9xN8qP3vR5sD6aG9jL0pQ+w1yT4mW5zA=`
-
-### Passo 3: Copiar WORKER_SECRET para .env.local
-
-1. Copiar o valor que você gerou acima
-2. Adicionar a `.env.local` deste projeto:
-   ```
-   WORKER_SECRET="kYrpL7FqK2m9xN8qP3vR5sD6aG9jL0pQ+w1yT4mW5zA="
-   ```
-
-### Passo 4: Configurar cron externo
-
-Netlify não oferece cron gratuitamente no plano Starter. Usar [cron-job.org](https://cron-job.org) (gratuito):
-
-1. Ir para https://cron-job.org
-2. Se não tiver conta, criar uma (gratuita)
-3. Clicar em **Create Cronjob**
-4. Preencher assim:
-   - **Title**: `Extraction Job Worker`
-   - **URL**: `https://seu-dominio.netlify.app/api/internal/job-worker`
-   - **Method**: `POST`
-   - **Schedule**: `*/1 * * * *` (a cada 1 minuto)
-   - **Headers**: adicionar um header customizado:
-     - **Header name**: `x-worker-secret`
-     - **Header value**: Cole aqui o mesmo `WORKER_SECRET` que configurou acima
-5. Salvar e testar clicando em **FORCE EXECUTION**
-6. Deve retornar resposta: `{ "ok": true, "jobsProcessed": 0, ... }`
-
-Observação: Se houver erro 401/403, significa `x-worker-secret` está errado ou não está sendo enviado.
-
-### Passo 5: Deploy para Netlify
-
-```bash
-git add .
-git commit -m "fix: extraction worker for Netlify free tier via API route + cron"
-git push
+```ts
+const handler: Handler = async () => { … };
+export { handler };                                        // named export → função v1
+export const config: Config = { schedule: "* * * * *" };   // só lido em funções v2
 ```
 
-Netlify detecta push e faz deploy automaticamente.
+`zip-it-and-ship-it` classifica a função pelo formato do export. Export nomeado `handler`
+= função v1 (Lambda-compat), e nesse modo o `export const config` é **ignorado em silêncio**.
+Build passava, função deployava, cron nunca era registrado. A API de deploy da Netlify
+mostrava a prova: `"function_schedules": []`.
 
-### Passo 6: Testar em produção
-
-1. Abrir seu site em produção
-2. Criar uma nova extração (qualquer projeto, qualquer query)
-3. Observar o status:
-   - **Tempo T+0**: Status = "Na fila" ✓
-   - **Tempo T+0-60s**: Aguardar cron-job.org dispararr
-   - **Tempo T+60s**: Status deve mudar para "Rodando" ✓
-   - **Tempo T+90s a T+300s** (dependendo de quantos resultados): Status = "Concluída" ✓
-
-Se não mudar de status:
-- Ir a **cron-job.org** e verificar se está executando (na aba **Executions**)
-- Verificar logs da Netlify: **Functions > job-worker (API route)** (no painel da Netlify, procurar "Functions" no menu)
-- Se ver errros, copiar o erro e enviar para analise
+Consequência: nenhum worker consumia a fila. O job ficava em `pgboss.job.state = 'created'`
+para sempre e a extração em `queued` — sem erro, sem log, sem sinal.
 
 ---
 
-## Alternativa (se upgrade para Pro)
+## Arquitetura atual
 
-Se fizer upgrade para Netlify Pro:
-- `netlify/functions/job-worker.ts` começa a rodar automaticamente
-- A API route continua funcionando como backup
-- Não precisa remover nada
-- Para desabilitar cron-job.org, pausar em https://cron-job.org (opcional)
+```
+createExtraction()                  lib/extractions/actions.ts
+  └─ boss.send("extraction:apify-start")        role: producer
 
----
+netlify/functions/job-worker.ts     Scheduled Function, "* * * * *"   ← caminho primário
+  └─ drainQueues()                  lib/jobs/dispatch.ts, budget 8s
+      ├─ extraction:apify-start  → startRun na Apify        → status "running"
+      ├─ extraction:poll         → getRun, re-enfileira a cada 15s
+      ├─ extraction:ingest       → grava resultados página a página → "completed"
+      └─ enrich:deep             → pesquisa profunda (CNPJ/QSA)
+  └─ expireStalledExtractions()     lib/extractions/watchdog.ts
 
-## Troubleshooting
+app/api/internal/job-worker        cron externo a cada 5 min          ← redundância
+lib/jobs/dev-worker.ts             setInterval 2s, só em NODE_ENV=development
+```
 
-### Status ainda em "Na fila" depois de 2+ minutos
+Os três entrypoints compartilham `drainQueues()` e `JOB_HANDLERS` — a tabela de roteamento
+e o loop existem em um lugar só.
 
-**Causa provável**: cron-job.org não está enviando o header correto
+### Orçamento de tempo
 
-**Solução**:
-1. Ir a cron-job.org > seu job > **Settings**
-2. Descer até **Custom HTTP Headers**
-3. Verificar se `x-worker-secret` está lá com o valor correto
-4. Clicar **FORCE EXECUTION** novamente
-5. Deveria retornar `401` se o header estiver faltando, ou `200` se correto
+Netlify Functions morrem em ~10s (free) / ~26s (Pro). `drainQueues` checa o relógio
+**antes de cada `boss.fetch`** e para de puxar trabalho novo quando o budget acaba (8s),
+deixando o job em voo terminar. Sem isso, uma função morta no meio deixa jobs em `active`
+sem `complete()` nem `fail()` — pendurados até o `expireInSeconds` da fila.
 
-### Erro 401 no cron-job.org
+### Papéis do pg-boss
 
-**Causa**: `WORKER_SECRET` no cron não bate com o da Netlify
+`getBoss({ role })` — produtor e consumidor rodam em funções serverless diferentes:
 
-**Solução**:
-1. Copiar o valor exato de **Settings > Build & deploy > Environment** na Netlify
-2. Colar no cron-job.org **Custom HTTP Headers** (sem espaços extras)
-3. Test novamente
+| role | supervise | monitorState | usa |
+|---|---|---|---|
+| `producer` (default) | não | não | server actions, rotas do app |
+| `worker` | sim | 30s | scheduled function, API route, dev-worker |
 
-### Logs da Netlify não mostram nada
+O worker também é dono das políticas de fila: só ele chama `updateQueue`. Isso importa
+porque `createQueue` é no-op quando a fila já existe — `extraction:start` e
+`extraction:page`, criadas em abril/2026, ficaram com `retry_limit = null` por meses
+porque toda chamada posterior de `createQueue` não fazia nada.
 
-**Causa**: Cron não está disparando a URL
+### Watchdog
 
-**Solução**:
-1. Usar `curl` manualmente pra testar se o endpoint existe:
-   ```bash
-   curl -X POST https://seu-dominio.netlify.app/api/internal/job-worker \
-     -H "x-worker-secret: kYrpL7FqK2m9xN8qP3vR5sD6aG9jL0pQ+w1yT4mW5zA=" \
-     -H "Content-Type: application/json"
-   ```
-2. Deve retornar `200 OK` com JSON `{ "ok": true, ... }`
-3. Se retornar `401`, o header está errado
-4. Se retornar `404`, o arquivo `app/api/internal/job-worker/route.ts` não foi deployado corretamente
+`expireStalledExtractions()` marca como `failed`, com mensagem explicando a causa:
+- `queued` há mais de 10 min (nenhum worker drenou a fila);
+- `running` há mais de 45 min (o poll da Apify termina em ~20 min no pior caso).
 
-### Database connection error
-
-**Causa**: `DATABASE_URL` não está configurada na Netlify
-
-**Solução**:
-1. Ir a **Settings > Build & deploy > Environment**
-2. Verificar se `DATABASE_URL` está lá (copiada de `.env.local`)
-3. Tentar reconectar manualmente: `DATABASE_URL="postgresql://user:pass@host/db"` (incluindo porta se necessário)
+Na UI, uma extração `queued` há mais de 3 min já aparece como **"Na fila — atrasada"**
+em laranja. Extrações `failed` passam a mostrar o `errorMessage`. O objetivo é que uma
+parada nunca mais seja indistinguível de lentidão.
 
 ---
 
-## Monitoramento contínuo
+## Configuração de produção
 
-Para saber se tudo está funcionando:
+### Variáveis de ambiente (painel da Netlify, contexto production)
 
-1. **Logs Netlify**: https://app.netlify.com > seu site > **Functions** → procurar chamadas a `job-worker`
-2. **Sentry**: Se estiver usando (verificar `.env.local` `NEXT_PUBLIC_SENTRY_DSN`), erros vão aparecer em https://sentry.io
-3. **Database**: Query pra ver se `extraction_results` está recebendo registros:
-   ```sql
-   SELECT COUNT(*) FROM extraction_results WHERE created_at > NOW() - INTERVAL '1 hour';
-   ```
+| Var | Obrigatória | Para quê |
+|---|---|---|
+| `DATABASE_URL` | sim | pg-boss + app |
+| `APIFY_TOKEN` | sim | sem ela toda extração falha (agora com erro visível) |
+| `WORKER_SECRET` | só se usar o cron externo | autentica `POST /api/internal/job-worker` |
 
----
+### Cron externo (redundância opcional)
 
-## Notas arquiteturais
-
-- **Local dev**: Usa `lib/jobs/dev-worker.ts` via `setInterval` (2s)
-- **Produção com Scheduled Functions**: `netlify/functions/job-worker.ts` (Pro+)
-- **Produção sem Scheduled Functions**: `app/api/internal/job-worker` via cron externo (Starter)
-
-Ambas chamam a mesma função core: `lib/google-places/job-handler.ts` → `processExtractionPage()`
+[cron-job.org](https://cron-job.org) → `POST https://crm.techhive.com.br/api/internal/job-worker`,
+header `x-worker-secret: <WORKER_SECRET>`, a cada **5 minutos** (não 1 — o caminho primário
+é a Scheduled Function).
 
 ---
 
-## Support
+## Verificação após qualquer mudança no worker
 
-Se algo não funcionar:
-1. Compartilhar erro exato (screenshot de Sentry ou logs da Netlify)
-2. Confirmar que `WORKER_SECRET` está igual em 3 lugares:
-   - `.env.local` (local)
-   - Netlify Environment Variables (settings > build & deploy)
-   - cron-job.org Custom HTTP Headers
+**1. O schedule registrou** — este é o teste que faltava antes:
+
+```bash
+curl -s -H "Authorization: Bearer $NETLIFY_TOKEN" \
+  "https://api.netlify.com/api/v1/sites/e8294cde-1139-45c0-b865-bcc1355bd56a/deploys?per_page=1" \
+  | jq '.[0].function_schedules'
+```
+Precisa conter `job-worker`. Se voltar `[]`, o cron não existe — não importa o que o
+código diga.
+
+**2. A fila drena:**
+
+```sql
+SELECT name, state, count(*), min(created_on) FROM pgboss.job GROUP BY 1,2;
+SELECT id, status, provider, apify_run_id, processed, error_message
+FROM extractions ORDER BY created_at DESC LIMIT 3;
+```
+Nada deve permanecer em `state = 'created'` por mais de ~1 min.
+
+**3. Logs:** Netlify → Functions → `job-worker` → uma invocação por minuto,
+`{ ok: true, processed, failed, expired }`, sem timeout.
+
+**4. Fallback:**
+```bash
+curl -X POST https://crm.techhive.com.br/api/internal/job-worker -H "x-worker-secret: <secret>"
+# 200 { ok: true, ... }   |   secret errado → 401
+```
+
+**5. Caminho de falha:** com `APIFY_TOKEN` inválido, a extração deve virar `failed`
+com mensagem em ≤ 1 min. Nunca `queued` silencioso.

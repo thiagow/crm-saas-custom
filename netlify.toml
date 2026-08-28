@@ -15,6 +15,13 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+# Declared here as well as in netlify/functions/job-worker.ts. The in-code `config` export
+# is only honoured for v2 functions, and a regression to the v1 export shape would silently
+# drop the schedule (this is exactly how extractions ended up stuck in "queued"). This
+# declaration does not depend on the function's export shape.
+[functions."job-worker"]
+  schedule = "* * * * *"
+
 # Headers (complementary to next.config.ts)
 [[headers]]
   for = "/*"
