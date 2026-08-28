@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import type { extractions } from "@/db/schema";
+import { cancelExtraction, getExtractionStatus } from "@/lib/extractions/actions";
+import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { getExtractionStatus, cancelExtraction } from "@/lib/extractions/actions";
-import { cn } from "@/lib/utils";
-import type { extractions } from "@/db/schema";
 
 type Extraction = typeof extractions.$inferSelect;
 
@@ -18,6 +18,18 @@ const STATUS_CONFIG = {
   completed: { label: "Concluída", color: "text-green-400", dot: "bg-green-500" },
   failed: { label: "Falhou", color: "text-red-400", dot: "bg-red-500" },
   cancelled: { label: "Cancelada", color: "text-zinc-600", dot: "bg-zinc-700" },
+};
+
+/** A healthy queue is drained within ~1 min (netlify/functions/job-worker.ts). Past this
+ *  the extraction is not "pending", it is stuck — and saying so is the whole point: a
+ *  queued row that looks identical at 10s and at 2 days is how the stall stayed invisible.
+ *  The watchdog fails it for real a few minutes later (lib/extractions/watchdog.ts). */
+const STALE_QUEUED_MS = 3 * 60_000;
+
+const STALE_CONFIG = {
+  label: "Na fila — atrasada",
+  color: "text-orange-400",
+  dot: "bg-orange-400 animate-pulse",
 };
 
 function ExtractionRow({
@@ -30,6 +42,16 @@ function ExtractionRow({
   const [status, setStatus] = useState(extraction);
   const [isPending, startTransition] = useTransition();
   const isActive = status.status === "queued" || status.status === "running";
+
+  // Starts as null so the server and the first client render agree — the staleness
+  // badge only appears once the browser has a clock of its own.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isActive) return;
+    setNow(Date.now());
+    const tick = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(tick);
+  }, [isActive]);
 
   // Poll for status updates on active extractions
   useEffect(() => {
@@ -58,7 +80,12 @@ function ExtractionRow({
     });
   }
 
-  const config = STATUS_CONFIG[status.status];
+  const isStale =
+    status.status === "queued" &&
+    now !== null &&
+    now - new Date(status.createdAt).getTime() > STALE_QUEUED_MS;
+
+  const config = isStale ? STALE_CONFIG : STATUS_CONFIG[status.status];
 
   return (
     <div className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -72,6 +99,17 @@ function ExtractionRow({
           {status.totalFound > 0 && ` · ${status.totalFound} encontrados`}
           {(status.costUsd ?? 0) > 0 && ` · $${status.costUsd?.toFixed(2)} USD`}
         </p>
+        {isStale && (
+          <p className="text-xs text-orange-400/80 mt-1">
+            O processador de jobs não pegou esta extração. Ela será marcada como falha
+            automaticamente.
+          </p>
+        )}
+        {status.status === "failed" && status.errorMessage && (
+          <p className="text-xs text-red-400/80 mt-1 line-clamp-2" title={status.errorMessage}>
+            {status.errorMessage}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <span className={cn("text-xs font-medium", config.color)}>{config.label}</span>

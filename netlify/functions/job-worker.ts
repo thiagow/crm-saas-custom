@@ -1,47 +1,44 @@
 /**
  * Netlify Scheduled Function — runs every minute.
- * Drains the pg-boss job queue for extraction jobs.
+ * Drains the pg-boss job queues and expires stalled extractions.
  *
- * Schedule: "* * * * *" (every 1 minute)
- * Timeout: Netlify Functions default 10s (Pro: 26s).
- * Each job processes one page of Google Places results (~20 places).
+ * ⚠️ This MUST stay a v2 function (default export). It was previously written as a v1
+ * function (`export { handler }`) *with* a v2 `export const config` — zip-it-and-ship-it
+ * classifies by export shape, so it deployed as an ordinary v1 function and silently
+ * ignored the schedule. The deploy API reported `function_schedules: []` and every
+ * extraction sat in "queued" forever. netlify.toml declares the same schedule as a
+ * belt-and-braces guard; if you change this file, verify `function_schedules` is not
+ * empty on the resulting deploy.
  *
- * Uses boss.fetch() instead of boss.work() — the correct pattern for serverless
- * functions. boss.work() registers long-running workers and requires boss.stop()
- * to clean up; but boss.stop() corrupts the singleton so subsequent invocations
- * get a stopped boss and never process jobs. fetch() is stateless and sidesteps
- * this entirely.
+ * Uses boss.fetch() (via drainQueues) instead of boss.work() — the correct pattern for
+ * serverless. boss.work() registers long-running workers and requires boss.stop() to
+ * clean up; but boss.stop() corrupts the singleton so subsequent invocations get a
+ * stopped boss and never process jobs. fetch() is stateless and sidesteps this entirely.
  */
-import type { Config, Handler } from "@netlify/functions";
+import type { Config } from "@netlify/functions";
+import { expireStalledExtractions } from "../../lib/extractions/watchdog";
 import { getBoss } from "../../lib/jobs/boss";
-import { JOB_HANDLERS, JOB_QUEUES } from "../../lib/jobs/handlers";
+import { drainQueues } from "../../lib/jobs/dispatch";
 
+/** Netlify Functions time out at ~10s (free) / ~26s (Pro). Leave headroom for the
+ *  watchdog query and the response. */
+const BUDGET_MS = 8_000;
 const BATCH_SIZE = 5;
 
-const handler: Handler = async () => {
-  const boss = await getBoss();
+export default async function jobWorker(): Promise<Response> {
+  const boss = await getBoss({ role: "worker" });
 
-  for (const queue of JOB_QUEUES) {
-    const jobs = await boss.fetch(queue, { batchSize: BATCH_SIZE });
-    if (!jobs || jobs.length === 0) continue;
+  const result = await drainQueues(boss, {
+    budgetMs: BUDGET_MS,
+    batchSize: BATCH_SIZE,
+    label: "[job-worker]",
+  });
 
-    for (const job of jobs) {
-      try {
-        await JOB_HANDLERS[queue](job.data);
-        await boss.complete(queue, job.id);
-      } catch (err) {
-        console.error(`[job-worker] job ${job.id} (${queue}) failed:`, err);
-        await boss.fail(queue, job.id, {
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
+  // Runs after the drain so a queue that is genuinely moving is never expired.
+  const { expired } = await expireStalledExtractions();
 
-  return { statusCode: 200, body: "OK" };
-};
-
-export { handler };
+  return Response.json({ ok: true, ...result, expired });
+}
 
 export const config: Config = {
   schedule: "* * * * *",
