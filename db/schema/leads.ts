@@ -23,6 +23,7 @@ export const leadSourceEnum = pgEnum("lead_source", ["google_maps", "csv_import"
 // generating SQL; both declarations point at the same underlying Postgres type.
 const phoneTypeEnum = pgEnum("phone_type", ["mobile", "landline", "tollfree", "unknown"]);
 const whatsappStatusEnum = pgEnum("whatsapp_status", ["unknown", "likely", "verified", "none"]);
+const gbpStatusEnum = pgEnum("gbp_status", ["claimed", "unclaimed", "unknown"]);
 
 export const activityTypeEnum = pgEnum("activity_type", [
   "note",
@@ -70,6 +71,11 @@ export const leads = pgTable(
     reviewsCount: integer("reviews_count"),
     isOnGoogleMaps: boolean("is_on_google_maps").notNull().default(false),
     googleMapsUrl: text("google_maps_url"),
+    /** Mirrors extraction_results.gbp_status so an unclaimed Google Business Profile —
+     *  the strongest signal the extraction produces — survives promotion to a lead. */
+    gbpStatus: gbpStatusEnum("gbp_status").notNull().default("unknown"),
+    businessProfileId: text("business_profile_id"),
+    socialLinks: jsonb("social_links").default({}).notNull(),
     // Owner / company (from CNPJ "pesquisa profunda", if it ran before promotion)
     ownerName: text("owner_name"),
     ownerEmail: text("owner_email"),

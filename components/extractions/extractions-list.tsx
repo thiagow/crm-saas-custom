@@ -97,6 +97,10 @@ function ExtractionRow({
         <p className="text-xs text-zinc-600 mt-0.5">
           {formatDistanceToNow(new Date(status.createdAt), { addSuffix: true, locale: ptBR })}
           {status.totalFound > 0 && ` · ${status.totalFound} encontrados`}
+          {/* Duplicates are dropped silently by the ingest's onConflictDoNothing. Showing
+              the split is what tells a wasted re-run apart from a search that found nothing. */}
+          {status.processed > 0 && ` · ${status.processed} novos`}
+          {status.duplicates > 0 && ` · ${status.duplicates} já na base`}
           {(status.costUsd ?? 0) > 0 && ` · $${status.costUsd?.toFixed(2)} USD`}
         </p>
         {isStale && (
@@ -178,6 +182,7 @@ export function ExtractionsList({
             stroke="currentColor"
             viewBox="0 0 24 24"
           >
+            <title>Atualizar</title>
             <path
               strokeLinecap="round"
               strokeLinejoin="round"

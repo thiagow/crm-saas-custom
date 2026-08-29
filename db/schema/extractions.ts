@@ -1,3 +1,4 @@
+import type { SocialLinks } from "@/lib/enrichment/link-classifier";
 import { desc } from "drizzle-orm";
 import {
   boolean,
@@ -54,6 +55,49 @@ export const deepSearchStatusEnum = pgEnum("deep_search_status", [
   "failed",
 ]);
 
+/**
+ * Whether the business has claimed its Google Business Profile ("Google Meu Negócio").
+ *
+ * Derived from the Apify item's `claimThisBusiness` flag — Google renders a "Claim this
+ * business" affordance only on unclaimed profiles. Verified against 99 real results on
+ * 2026-08-28: the correlation with `businessProfileId` was exact (94 claimed rows all had
+ * an id, 5 unclaimed rows all lacked one), so the two signals corroborate each other.
+ *
+ * Not the same thing as `isOnGoogleMaps`, which only says the place isn't permanently
+ * closed and is therefore true for every row a Maps search can return.
+ */
+export const gbpStatusEnum = pgEnum("gbp_status", ["claimed", "unclaimed", "unknown"]);
+
+/**
+ * The search axes stored in `extractions.filters`.
+ *
+ * Apify has no offset/pagination — every run restarts from scratch and returns roughly
+ * the same places in the same order, so "get results 101-150" does not exist. The only
+ * way to reach new businesses is to cover a *different* slice of the space. These are
+ * the levers the compass/google-maps-extractor actor actually exposes (verified against
+ * its input schema on 2026-08-28); together they form the identity of a search.
+ */
+export interface ExtractionFilters {
+  /** Lowercased, accent-stripped, whitespace-collapsed query — the comparison key. */
+  normalizedQuery?: string | undefined;
+  /** Restrict to places with or without a website. "withoutWebsite" is a strong lead filter. */
+  websiteFilter?: "allPlaces" | "withWebsite" | "withoutWebsite" | undefined;
+  /** Apify's rating band — the actor's own enum, not a free-form string. */
+  minStars?:
+    | ""
+    | "two"
+    | "twoAndHalf"
+    | "three"
+    | "threeAndHalf"
+    | "four"
+    | "fourAndHalf"
+    | undefined;
+  /** Narrows the search area to a single postal code (never combined with city). */
+  postalCode?: string | undefined;
+  /** How the search term must match the place title. */
+  searchMatching?: "all" | "only_includes" | "only_exact" | undefined;
+}
+
 export const extractions = pgTable(
   "extractions",
   {
@@ -73,8 +117,16 @@ export const extractions = pgTable(
     status: extractionStatusEnum("status").notNull().default("queued"),
     totalFound: integer("total_found").default(0).notNull(),
     processed: integer("processed").default(0).notNull(),
+    /** Places returned by the provider that were already in the project — see
+     *  lib/apify/job-handler.ts. Surfaced in the UI so a wasted re-run is visible
+     *  instead of looking like an extraction that simply "found nothing". */
+    duplicates: integer("duplicates").default(0).notNull(),
     costUsd: doublePrecision("cost_usd").default(0).notNull(),
     errorMessage: text("error_message"),
+    /** The axes that define this search (normalized query, location, provider filters).
+     *  Two extractions with equal `filters` cover the same ground — this is what makes
+     *  the pre-flight duplicate check in lib/extractions/overlap.ts possible. */
+    filters: jsonb("filters").$type<ExtractionFilters>().default({}).notNull(),
     // pg-boss job reference
     jobId: text("job_id"),
     // Provider (Apify primary, Google Places fallback) + run tracking
@@ -131,6 +183,13 @@ export const extractionResults = pgTable(
     // Presence
     isOnGoogleMaps: boolean("is_on_google_maps").notNull().default(true),
     googleMapsUrl: text("google_maps_url"),
+    /** Whether the Google Business Profile is claimed — see gbpStatusEnum. An unclaimed
+     *  profile is a strong sales signal; `isOnGoogleMaps` cannot express this. */
+    gbpStatus: gbpStatusEnum("gbp_status").notNull().default("unknown"),
+    businessProfileId: text("business_profile_id"),
+    /** Social/messaging destinations found in the place's `website` field that are not
+     *  Instagram or WhatsApp (those get their own columns). See lib/enrichment/link-classifier.ts. */
+    socialLinks: jsonb("social_links").$type<SocialLinks>().default({}).notNull(),
     // Instagram detail (only populated by the paid "pesquisa profunda" deep-search step)
     instagramFollowers: integer("instagram_followers"),
     instagramVerified: boolean("instagram_verified"),
@@ -148,6 +207,10 @@ export const extractionResults = pgTable(
     deepStatus: deepSearchStatusEnum("deep_status").notNull().default("none"),
     deepEnrichedAt: timestamp("deep_enriched_at", { mode: "date" }),
     deepError: text("deep_error"),
+    /** When the free site crawl (lib/enrichment/site-enrich.ts) last ran for this row.
+     *  Doubles as the atomic claim marker so two workers never crawl the same site —
+     *  it is set by the same UPDATE ... RETURNING that selects the batch. */
+    siteEnrichedAt: timestamp("site_enriched_at", { mode: "date" }),
     // Raw API response for future enrichment
     raw: jsonb("raw").default({}).notNull(),
     // Triage state
