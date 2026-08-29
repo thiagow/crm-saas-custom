@@ -1,5 +1,6 @@
 import { extractionResults, extractions } from "@/db/schema";
 import { db } from "@/lib/db/client";
+import type { SiteEnrichJobData } from "@/lib/enrichment/site-job-handler";
 import { getBoss } from "@/lib/jobs/boss";
 /**
  * pg-boss handlers for the Apify-backed extraction pipeline.
@@ -22,7 +23,7 @@ import { getBoss } from "@/lib/jobs/boss";
  * function does the work, an outer try/catch persists the error to `extractions` and
  * re-throws so the caller's boss.fail() runs pg-boss's own retry/backoff.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { ACTORS, buildDiscoveryInput } from "./actors";
 import {
   ApifyError,
@@ -40,6 +41,19 @@ const INGEST_PAGE_SIZE = 50;
 /** Hard ceiling on Apify spend for a single run, independent of the pre-run estimate. */
 const MAX_RUN_COST_USD = Number.parseFloat(process.env.APIFY_MAX_RUN_COST_USD ?? "2.00");
 
+/**
+ * Mid-run duplicate cut-off.
+ *
+ * Apify bills per place as it crawls, so by the time a run finishes the money is already
+ * spent — checking for duplicates at ingest would only produce a post-mortem. Datasets of
+ * a RUNNING run are readable, so each poll samples what has landed so far and aborts the
+ * run when it is mostly places the project already has. The sample floor keeps a run of
+ * three early duplicates from killing an otherwise good search.
+ */
+const DUPLICATE_SAMPLE_SIZE = 30;
+const DUPLICATE_SAMPLE_MIN = 20;
+const DUPLICATE_ABORT_RATIO = 0.7;
+
 export interface StartJobData {
   extractionId: string;
 }
@@ -49,6 +63,63 @@ export interface PollJobData {
 export interface IngestJobData {
   extractionId: string;
   offset: number;
+}
+
+/** How many of these placeIds the project already stores. */
+async function countKnownPlaceIds(projectId: string, placeIds: string[]): Promise<number> {
+  if (placeIds.length === 0) return 0;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(extractionResults)
+    .where(
+      and(eq(extractionResults.projectId, projectId), inArray(extractionResults.placeId, placeIds)),
+    );
+  return row?.count ?? 0;
+}
+
+/**
+ * Aborts a still-running Apify run whose results are mostly places already in the base.
+ * Returns true when the run was cut, so the caller stops re-enqueueing the poll.
+ */
+async function abortIfMostlyDuplicates(extraction: {
+  id: string;
+  projectId: string;
+  apifyRunId: string;
+  apifyDatasetId: string | null;
+}): Promise<boolean> {
+  if (!extraction.apifyDatasetId) return false;
+
+  const { items } = await listDatasetItems<{ placeId?: string }>({
+    datasetId: extraction.apifyDatasetId,
+    offset: 0,
+    limit: DUPLICATE_SAMPLE_SIZE,
+  });
+
+  const placeIds = items.map((i) => i.placeId).filter((id): id is string => !!id);
+  if (placeIds.length < DUPLICATE_SAMPLE_MIN) return false;
+
+  const known = await countKnownPlaceIds(extraction.projectId, placeIds);
+  const ratio = known / placeIds.length;
+  if (ratio < DUPLICATE_ABORT_RATIO) return false;
+
+  const percent = Math.round(ratio * 100);
+  console.warn(
+    `[apify-extraction] aborting run ${extraction.apifyRunId} — ${percent}% duplicates in sample`,
+  );
+  await abortRun(extraction.apifyRunId).catch((err) =>
+    console.error(`[apify-extraction] abortRun failed for ${extraction.apifyRunId}:`, err),
+  );
+
+  await db
+    .update(extractions)
+    .set({
+      status: "cancelled",
+      errorMessage: `Interrompida automaticamente: ${percent}% dos resultados já estavam na base. Use um filtro diferente (sem site, 4+ estrelas, outro CEP) para alcançar empresas novas.`,
+      finishedAt: new Date(),
+    })
+    .where(eq(extractions.id, extraction.id));
+
+  return true;
 }
 
 async function withFailureRecorded<T>(extractionId: string, fn: () => Promise<T>): Promise<T> {
@@ -87,6 +158,7 @@ export async function handleExtractionStart(data: StartJobData): Promise<void> {
       state: extraction.state,
       maxResults: extraction.maxResults,
       enrichContacts: extraction.enrichContacts,
+      filters: extraction.filters,
     });
 
     const run = await startRun({
@@ -137,6 +209,15 @@ export async function handleExtractionPoll(data: PollJobData): Promise<void> {
     }
 
     if (!isTerminalRunStatus(run.status)) {
+      // Cut a wasteful re-run while it is still costing money, not after.
+      const aborted = await abortIfMostlyDuplicates({
+        id: extraction.id,
+        projectId: extraction.projectId,
+        apifyRunId: extraction.apifyRunId,
+        apifyDatasetId: extraction.apifyDatasetId,
+      });
+      if (aborted) return;
+
       const pollAttempts = extraction.pollAttempts + 1;
       if (pollAttempts > MAX_POLL_ATTEMPTS) {
         await abortRun(extraction.apifyRunId).catch((err) =>
@@ -216,6 +297,7 @@ export async function handleExtractionIngest(data: IngestJobData): Promise<void>
     });
 
     let inserted = 0;
+    let candidates = 0;
     if (items.length > 0) {
       const rows = items
         .filter((item) => !!item.placeId)
@@ -228,6 +310,7 @@ export async function handleExtractionIngest(data: IngestJobData): Promise<void>
             status: "pending" as const,
           };
         });
+      candidates = rows.length;
 
       if (rows.length > 0) {
         const insertedRows = await db
@@ -239,6 +322,9 @@ export async function handleExtractionIngest(data: IngestJobData): Promise<void>
       }
     }
 
+    // onConflictDoNothing silently drops places the project already has. Counting the gap
+    // is what turns "the extraction found nothing" into "38 of these were already yours".
+    const duplicates = candidates - inserted;
     const newProcessed = extraction.processed + inserted;
     const nextOffset = offset + items.length;
     const hasMore = nextOffset < total;
@@ -248,6 +334,7 @@ export async function handleExtractionIngest(data: IngestJobData): Promise<void>
       .set({
         processed: newProcessed,
         totalFound: total,
+        duplicates: sql`${extractions.duplicates} + ${duplicates}`,
         ...(hasMore ? {} : { status: "completed" as const, finishedAt: new Date() }),
       })
       .where(and(eq(extractions.id, extractionId), eq(extractions.status, "running")));
@@ -258,7 +345,17 @@ export async function handleExtractionIngest(data: IngestJobData): Promise<void>
         extractionId,
         offset: nextOffset,
       } satisfies IngestJobData);
+      return;
     }
+
+    // Ingest done — kick off the free site crawl that fills in Instagram and e-mail
+    // (lib/enrichment/site-job-handler.ts). Deliberately not blocking the extraction's
+    // "completed" status: the results are already usable without it.
+    const boss = await getBoss();
+    await boss.send("enrich:site", {
+      extractionId,
+      projectId: extraction.projectId,
+    } satisfies SiteEnrichJobData);
   });
 }
 

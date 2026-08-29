@@ -6,12 +6,23 @@ import { auth, getIsOwner } from "@/lib/auth";
 import { requireRole } from "@/lib/auth/rbac";
 import { db } from "@/lib/db/client";
 import { forProject } from "@/lib/db/for-project";
-import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { assertExtractionAllowed } from "./limits";
+import { buildFilters, getOverlapReport } from "./overlap";
 
-const MAX_PER_DAY = Number.parseInt(process.env.MAX_EXTRACTIONS_PER_DAY ?? "20", 10);
 const MAX_RESULTS = Number.parseInt(process.env.MAX_RESULTS_PER_EXTRACTION ?? "200", 10);
+
+/** The partition axes a user can set in the UI — see ExtractionFilters. */
+const searchFiltersSchema = z.object({
+  websiteFilter: z.enum(["allPlaces", "withWebsite", "withoutWebsite"]).optional(),
+  minStars: z
+    .enum(["", "two", "twoAndHalf", "three", "threeAndHalf", "four", "fourAndHalf"])
+    .optional(),
+  searchMatching: z.enum(["all", "only_includes", "only_exact"]).optional(),
+  postalCode: z.string().max(12).optional(),
+});
 
 const createExtractionSchema = z.object({
   projectSlug: z.string(),
@@ -20,10 +31,12 @@ const createExtractionSchema = z.object({
   state: z.string().min(2).max(50),
   radiusMeters: z.number().int().positive().max(50000).optional(),
   maxResults: z.number().int().min(1).max(MAX_RESULTS).default(100),
-  // Site-contact enrichment (email/social links) — cheap (~$0.006/place) and safe as a
-  // default. The expensive Instagram-follower-detail enrichment is never automatic;
-  // it's only triggered per-result from the triage "pesquisa profunda" button.
+  // Site-contact enrichment (email/social links). Kept on because it costs nothing when
+  // it doesn't run, but the pipeline no longer depends on it — see lib/apify/mappers.ts.
   enrichContacts: z.boolean().default(true),
+  filters: searchFiltersSchema.optional(),
+  /** Set by the UI only after the user acknowledges a duplicate-search warning. */
+  acknowledgeDuplicate: z.boolean().default(false),
 });
 
 export async function createExtraction(input: z.infer<typeof createExtractionSchema>) {
@@ -40,26 +53,58 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
 
   await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
 
-  // Enqueue the extraction job — Apify is the primary provider (see lib/apify/job-handler.ts);
-  // it automatically falls back to Google Places if the Apify run fails.
-  const [extraction] = await db
-    .insert(extractions)
-    .values({
+  const filters = buildFilters({ query: data.query, filters: data.filters });
+
+  // Server-side guard, not just a UI nicety: the client warning can be bypassed, and a
+  // repeat run costs real money for results the project already owns.
+  if (!data.acknowledgeDuplicate) {
+    const overlap = await getOverlapReport({
       projectId: project.id,
       query: data.query,
       city: data.city,
       state: data.state,
-      radiusMeters: data.radiusMeters,
-      maxResults: data.maxResults,
-      status: "queued",
-      provider: "apify",
-      enrichContacts: data.enrichContacts,
-      estimatedCostUsd: estimateExtractionCostUsd({
+      filters: data.filters,
+    });
+    if (overlap.alreadyRan) {
+      throw new Error(
+        "Esta busca já foi feita para este projeto e vai repetir as mesmas empresas. " +
+          "Use um filtro diferente ou confirme que deseja rodar mesmo assim.",
+      );
+    }
+  }
+
+  const estimatedCostUsd = estimateExtractionCostUsd({
+    maxResults: data.maxResults,
+    enrichContacts: data.enrichContacts,
+  });
+
+  // Enqueue the extraction job — Apify is the primary provider (see lib/apify/job-handler.ts);
+  // it automatically falls back to Google Places if the Apify run fails.
+  //
+  // The limit check and the insert share one transaction so the advisory lock covers both:
+  // checking the caps and then inserting outside the lock would let two simultaneous
+  // clicks each see the same "spent so far" and both pass.
+  const extraction = await db.transaction(async (tx) => {
+    await assertExtractionAllowed(tx, project.id, estimatedCostUsd);
+
+    const [row] = await tx
+      .insert(extractions)
+      .values({
+        projectId: project.id,
+        query: data.query,
+        city: data.city,
+        state: data.state,
+        radiusMeters: data.radiusMeters,
         maxResults: data.maxResults,
+        status: "queued",
+        provider: "apify",
         enrichContacts: data.enrichContacts,
-      }),
-    })
-    .returning();
+        filters,
+        estimatedCostUsd,
+      })
+      .returning();
+    return row;
+  });
 
   if (!extraction) throw new Error("Failed to create extraction");
 
@@ -102,6 +147,49 @@ export async function createExtraction(input: z.infer<typeof createExtractionSch
 
   revalidatePath(`/${data.projectSlug}/extractions`);
   return extraction;
+}
+
+/**
+ * Pre-flight check for the "Nova extração" modal: would this search re-cover ground the
+ * project already paid for, and what different slices are still available?
+ *
+ * Read-only and safe to call on every keystroke-blur — it never starts a run.
+ */
+export async function checkExtractionOverlap(input: {
+  projectSlug: string;
+  query: string;
+  city: string;
+  state: string;
+  filters?: z.infer<typeof searchFiltersSchema> | undefined;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, input.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await forProject(project.id, session.user.id, getIsOwner(session));
+
+  if (input.query.trim().length < 2 || input.city.trim().length < 2) {
+    return {
+      alreadyRan: false,
+      lastRunAt: null,
+      previousRuns: 0,
+      placesInBase: 0,
+      suggestions: [],
+    };
+  }
+
+  return getOverlapReport({
+    projectId: project.id,
+    query: input.query,
+    city: input.city,
+    state: input.state,
+    filters: input.filters,
+  });
 }
 
 export async function getExtractions(projectSlug: string) {
@@ -176,6 +264,12 @@ const getTriageResultsSchema = z.object({
   hasSite: z.boolean().optional(),
   hasInstagram: z.boolean().optional(),
   hasEmail: z.boolean().optional(),
+  hasWhatsapp: z.boolean().optional(),
+  /** Businesses with no website — often the best leads, and invisible before this filter. */
+  noSite: z.boolean().optional(),
+  /** Unclaimed Google Business Profile — see gbpStatusEnum. */
+  gbpUnclaimed: z.boolean().optional(),
+  hasOwner: z.boolean().optional(),
   minRating: z.number().optional(),
   minReviews: z.number().optional(),
   orderBy: z.enum(["rating", "reviews", "name"]).default("rating"),
@@ -205,6 +299,10 @@ export async function getTriageResults(input: z.infer<typeof getTriageResultsSch
     ...(data.hasSite ? [isNotNull(extractionResults.website)] : []),
     ...(data.hasInstagram ? [isNotNull(extractionResults.instagramHandle)] : []),
     ...(data.hasEmail ? [isNotNull(extractionResults.email)] : []),
+    ...(data.hasWhatsapp ? [isNotNull(extractionResults.whatsappNumber)] : []),
+    ...(data.noSite ? [isNull(extractionResults.website)] : []),
+    ...(data.gbpUnclaimed ? [eq(extractionResults.gbpStatus, "unclaimed")] : []),
+    ...(data.hasOwner ? [isNotNull(extractionResults.ownerName)] : []),
     ...(data.minRating ? [gte(extractionResults.rating, data.minRating)] : []),
     ...(data.minReviews ? [gte(extractionResults.reviewsCount, data.minReviews)] : []),
   ];
@@ -290,6 +388,11 @@ export async function promoteResultsToLeads(input: z.infer<typeof promoteLeadsSc
           reviewsCount: r.reviewsCount ?? undefined,
           isOnGoogleMaps: r.isOnGoogleMaps,
           googleMapsUrl: r.googleMapsUrl ?? undefined,
+          // Anything added to extraction_results has to be listed here too, or it is
+          // silently dropped on promotion — the table below is the only path to `leads`.
+          gbpStatus: r.gbpStatus,
+          businessProfileId: r.businessProfileId ?? undefined,
+          socialLinks: r.socialLinks,
           ownerName: r.ownerName ?? undefined,
           ownerEmail: r.ownerEmail ?? undefined,
           cnpj: r.cnpj ?? undefined,
@@ -344,6 +447,45 @@ export async function promoteResultsToLeads(input: z.infer<typeof promoteLeadsSc
   revalidatePath(`/${data.projectSlug}/kanban`);
 
   return { promoted, alreadyExisted };
+}
+
+/**
+ * Returns discarded results to triage.
+ *
+ * Without this, a discarded place is unreachable forever: the unique index on
+ * (project_id, place_id) makes the ingest skip it on every future extraction, so it can
+ * never come back through a new search. Discarding was effectively irreversible.
+ */
+export async function reactivateDiscardedResults(input: {
+  projectSlug: string;
+  /** Scope to one extraction; omit to reactivate every discarded result in the project. */
+  extractionId?: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, input.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireRole(session.user.id, project.id, "sales", getIsOwner(session));
+
+  const restored = await db
+    .update(extractionResults)
+    .set({ status: "pending" })
+    .where(
+      and(
+        eq(extractionResults.projectId, project.id),
+        eq(extractionResults.status, "discarded"),
+        ...(input.extractionId ? [eq(extractionResults.extractionId, input.extractionId)] : []),
+      ),
+    )
+    .returning({ id: extractionResults.id });
+
+  revalidatePath(`/${input.projectSlug}/triage`);
+  return { restored: restored.length };
 }
 
 export async function discardResults(input: { resultIds: string[]; projectSlug: string }) {

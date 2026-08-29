@@ -48,6 +48,10 @@ const QUEUE_DEFINITIONS = [
   { name: "extraction:poll", retryLimit: 5, retryDelay: 15, expireInSeconds: 60 },
   { name: "extraction:ingest", retryLimit: 3, retryDelay: 20, expireInSeconds: 60 },
   { name: "enrich:deep", retryLimit: 2, retryDelay: 30, expireInSeconds: 120 },
+  // Free contact enrichment by crawling the business site — lib/enrichment/site-job-handler.ts.
+  // A dead website is a normal outcome, so retries are low: retrying an unreachable host
+  // three times just burns worker budget.
+  { name: "enrich:site", retryLimit: 1, retryDelay: 60, expireInSeconds: 60 },
 ] as const satisfies readonly (PgBoss.Queue & { name: string })[];
 
 /**

@@ -1,3 +1,4 @@
+import { type SocialLinks, resolveContactLinks } from "@/lib/enrichment/link-classifier";
 import { normalizeBrPhone } from "@/lib/enrichment/phone";
 
 /**
@@ -23,9 +24,25 @@ export interface ApifyGoogleMapsItem {
   permanentlyClosed?: boolean | null;
   temporarilyClosed?: boolean | null;
   url?: string | null; // Google Maps URL for this place
+  /** True when Google offers a "Claim this business" affordance — i.e. the Google Business
+   *  Profile is NOT claimed. Always present on discovery items (99/99 on 2026-08-28). */
+  claimThisBusiness?: boolean | null;
+  /** Present only for claimed profiles (94/94 on 2026-08-28) — corroborates the flag above. */
+  businessProfileId?: string | null;
   emails?: string[];
   phones?: string[];
-  instagrams?: string[]; // present when scrapeContacts is on — raw profile URLs from the site
+  /**
+   * Present when the scrapeContacts add-on actually runs.
+   *
+   * ⚠️ On this Apify account it does not. The 2026-08-28 run sent `scrapeContacts: true`
+   * (verified in the run's INPUT record) and Apify billed `contact-details-scraped: 0` —
+   * no item came back with `emails` or `instagrams`. The pipeline therefore treats these
+   * as a bonus, never a source of truth: Instagram and e-mail are resolved from the
+   * `website` field (lib/enrichment/link-classifier.ts) and from our own site crawl
+   * (lib/enrichment/site-enrich.ts). Do not delete those fallbacks on the assumption
+   * that the paid add-on covers this.
+   */
+  instagrams?: string[];
   instagramProfiles?: Array<{
     username: string;
     followersCount?: number;
@@ -57,7 +74,7 @@ export function pickInstagramHandle(
   const normalizedName = businessName
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{Diacritic}/gu, "")
     .replace(/[^a-z0-9]/g, "");
 
   const usernames = instagrams.map(extractInstagramUsername).filter((u): u is string => !!u);
@@ -111,7 +128,28 @@ export interface MappedApifyResult {
   whatsappStatus: "unknown" | "likely" | "verified" | "none";
   isOnGoogleMaps: boolean;
   googleMapsUrl: string | null;
+  gbpStatus: "claimed" | "unclaimed" | "unknown";
+  businessProfileId: string | null;
+  socialLinks: SocialLinks;
   raw: Record<string, unknown>;
+}
+
+/**
+ * Reads the Google Business Profile claim state.
+ *
+ * `claimThisBusiness` is the primary signal; `businessProfileId` corroborates it. When the
+ * flag is absent we fall back to the id's presence rather than guessing "claimed", so an
+ * actor output change degrades to "unknown" instead of quietly mislabelling every row.
+ */
+export function readGbpStatus(item: {
+  claimThisBusiness?: boolean | null;
+  businessProfileId?: string | null;
+}): "claimed" | "unclaimed" | "unknown" {
+  if (typeof item.claimThisBusiness === "boolean") {
+    return item.claimThisBusiness ? "unclaimed" : "claimed";
+  }
+  if (item.businessProfileId) return "claimed";
+  return "unknown";
 }
 
 /** Maps one dataset item from the discovery run (searchStringsArray-based) into the
@@ -119,8 +157,36 @@ export interface MappedApifyResult {
  *  instead, since that pass has richer Instagram data available. */
 export function mapDiscoveryItem(item: ApifyGoogleMapsItem): MappedApifyResult {
   const phone = normalizeBrPhone(item.phoneUnformatted ?? item.phone);
+
+  // The `website` field on a Maps place is whatever the owner typed — often an Instagram
+  // or wa.me link rather than a site. Resolving it here is where 17% of this database's
+  // Instagram handles come from, at zero cost. See lib/enrichment/link-classifier.ts.
+  const links = resolveContactLinks(item.website);
+
   const bestProfile = pickBestInstagramProfile(item.instagramProfiles);
-  const instagramHandle = bestProfile?.username ?? pickInstagramHandle(item.instagrams, item.title);
+  const instagramFromApify =
+    bestProfile?.username ?? pickInstagramHandle(item.instagrams, item.title);
+
+  // Precedence: the deep-search profile (real follower data) beats the site-crawl link,
+  // which beats the profile-field link. Whichever wins, record where it came from so a
+  // later enrichment pass can tell a guess from a verified value.
+  const instagramHandle = instagramFromApify ?? links.instagramHandle;
+  const instagramSource = instagramFromApify
+    ? "apify_contacts"
+    : links.instagramHandle
+      ? "maps_website_field"
+      : null;
+
+  // A wa.me link in the profile carries a number the owner published *for messaging* —
+  // stronger evidence than our shape-based guess on the main phone.
+  const whatsappNumber = links.whatsappFromLink ?? (phone.whatsappLikely ? phone.e164 : null);
+  const whatsappStatus: MappedApifyResult["whatsappStatus"] = links.whatsappFromLink
+    ? "likely"
+    : phone.e164
+      ? phone.whatsappLikely
+        ? "likely"
+        : "none"
+      : "unknown";
 
   return {
     placeId: item.placeId,
@@ -129,9 +195,9 @@ export function mapDiscoveryItem(item: ApifyGoogleMapsItem): MappedApifyResult {
     city: item.city ?? null,
     state: item.state ?? null,
     phone: item.phone ?? item.phoneUnformatted ?? null,
-    website: item.website ?? null,
+    website: links.website,
     instagramHandle,
-    instagramSource: instagramHandle ? "apify_site_crawl" : null,
+    instagramSource,
     instagramFollowers: bestProfile?.followersCount ?? null,
     instagramVerified: bestProfile?.accountVerificationStatus ?? null,
     category: item.categoryName ?? null,
@@ -143,10 +209,13 @@ export function mapDiscoveryItem(item: ApifyGoogleMapsItem): MappedApifyResult {
     emails: item.emails ?? [],
     phoneE164: phone.e164,
     phoneType: phone.type,
-    whatsappNumber: phone.whatsappLikely ? phone.e164 : null,
-    whatsappStatus: phone.e164 ? (phone.whatsappLikely ? "likely" : "none") : "unknown",
+    whatsappNumber,
+    whatsappStatus,
     isOnGoogleMaps: !(item.permanentlyClosed || false),
     googleMapsUrl: item.url ?? null,
+    gbpStatus: readGbpStatus(item),
+    businessProfileId: item.businessProfileId ?? null,
+    socialLinks: links.socialLinks,
     raw: item as unknown as Record<string, unknown>,
   };
 }

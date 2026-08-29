@@ -50,6 +50,13 @@
       "when": 1787198915431,
       "tag": "0006_cnpj_owner_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787962755357,
+      "tag": "0007_kind_kree",
+      "breakpoints": true
     }
   ]
 }

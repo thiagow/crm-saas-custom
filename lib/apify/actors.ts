@@ -13,6 +13,8 @@
  *     scoped to the specific results the user picked, with cost shown before running.
  */
 
+import type { ExtractionFilters } from "@/db/schema/extractions";
+
 export const ACTORS = {
   /** compass/google-maps-extractor — discovery + optional site-contact enrichment. */
   googleMaps: process.env.APIFY_ACTOR_MAPS ?? "compass~google-maps-extractor",
@@ -23,21 +25,39 @@ export interface DiscoveryInputParams {
   city: string;
   state: string;
   maxResults: number;
-  /** Automatic layer: crawls the business website for emails/socials/CNPJ. Cheap. */
+  /**
+   * Automatic layer: asks Apify to crawl the business website for emails/socials.
+   *
+   * ⚠️ Measured on 2026-08-28: sending `true` billed `contact-details-scraped: 0` and
+   * returned no contact fields on any of 99 items. It stays on because it costs nothing
+   * when it doesn't run, but nothing in the pipeline depends on it — see the note on
+   * `instagrams` in lib/apify/mappers.ts.
+   */
   enrichContacts: boolean;
+  /** Search-space partition axes — see ExtractionFilters in db/schema/extractions.ts. */
+  filters?: ExtractionFilters;
 }
 
 export function buildDiscoveryInput(params: DiscoveryInputParams): Record<string, unknown> {
-  const { query, city, state, maxResults, enrichContacts } = params;
+  const { query, city, state, maxResults, enrichContacts, filters = {} } = params;
+
+  // postalCode narrows the area on its own and Apify explicitly warns against combining
+  // it with a city — so it replaces the location query rather than adding to it.
+  const location = filters.postalCode
+    ? { postalCode: filters.postalCode, countryCode: "br" }
+    : { locationQuery: `${city}, ${state}, Brazil`, countryCode: "br" };
+
   return {
     searchStringsArray: [query],
-    locationQuery: `${city}, ${state}, Brazil`,
+    ...location,
     maxCrawledPlacesPerSearch: maxResults,
     language: "pt-BR",
-    countryCode: "br",
     skipClosedPlaces: true,
     scrapePlaceDetailPage: false,
     scrapeContacts: enrichContacts,
+    website: filters.websiteFilter ?? "allPlaces",
+    placeMinimumStars: filters.minStars ?? "",
+    searchMatching: filters.searchMatching ?? "all",
   };
 }
 

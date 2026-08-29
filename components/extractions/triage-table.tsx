@@ -5,6 +5,7 @@ import {
   discardResults,
   getTriageResults,
   promoteResultsToLeads,
+  reactivateDiscardedResults,
   updateExtractionResult,
 } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,10 @@ export function TriageTable({
   const [hasSite, setHasSite] = useState(false);
   const [hasInstagram, setHasInstagram] = useState(false);
   const [hasEmail, setHasEmail] = useState(false);
+  const [hasWhatsapp, setHasWhatsapp] = useState(false);
+  const [noSite, setNoSite] = useState(false);
+  const [gbpUnclaimed, setGbpUnclaimed] = useState(false);
+  const [hasOwner, setHasOwner] = useState(false);
   const [minRating, setMinRating] = useState<number | undefined>();
   const [orderBy, setOrderBy] = useState<"rating" | "reviews" | "name">("rating");
 
@@ -68,6 +73,10 @@ export function TriageTable({
         hasSite: hasSite || undefined,
         hasInstagram: hasInstagram || undefined,
         hasEmail: hasEmail || undefined,
+        hasWhatsapp: hasWhatsapp || undefined,
+        noSite: noSite || undefined,
+        gbpUnclaimed: gbpUnclaimed || undefined,
+        hasOwner: hasOwner || undefined,
         minRating,
         orderBy,
         page: 1,
@@ -87,6 +96,10 @@ export function TriageTable({
     hasSite,
     hasInstagram,
     hasEmail,
+    hasWhatsapp,
+    noSite,
+    gbpUnclaimed,
+    hasOwner,
     minRating,
     orderBy,
   ]);
@@ -264,6 +277,27 @@ export function TriageTable({
     });
   }
 
+  // Discarding used to be irreversible: the unique index on (project_id, place_id) makes
+  // every future extraction skip a discarded place, so it could never come back on its own.
+  function handleReactivate() {
+    startTransition(async () => {
+      try {
+        const { restored } = await reactivateDiscardedResults({
+          projectSlug,
+          ...(initialExtractionId ? { extractionId: initialExtractionId } : {}),
+        });
+        if (restored === 0) {
+          toast.info("Nenhum resultado descartado para reativar");
+        } else {
+          toast.success(`${restored} resultado(s) devolvido(s) para a triagem`);
+          await loadResults();
+        }
+      } catch {
+        toast.error("Erro ao reativar descartados");
+      }
+    });
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header + filters */}
@@ -275,6 +309,17 @@ export function TriageTable({
               {results.length} resultados pendentes · {selected.size} selecionados
             </p>
           </div>
+
+          {selected.size === 0 && (
+            <button
+              type="button"
+              onClick={handleReactivate}
+              title="Devolve resultados descartados para a triagem. Sem isso eles ficam presos: uma nova extração nunca os traz de volta."
+              className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+            >
+              Reativar descartados
+            </button>
+          )}
 
           {selected.size > 0 && (
             <div className="flex items-center gap-2">
@@ -318,10 +363,28 @@ export function TriageTable({
         {/* Filters */}
         <div className="flex items-center gap-3 flex-wrap">
           {[
+            { label: "Tem WhatsApp", value: hasWhatsapp, set: setHasWhatsapp },
             { label: "Tem e-mail", value: hasEmail, set: setHasEmail },
             { label: "Tem telefone", value: hasPhone, set: setHasPhone },
-            { label: "Tem site", value: hasSite, set: setHasSite },
             { label: "Tem Instagram", value: hasInstagram, set: setHasInstagram },
+            {
+              label: "Tem site",
+              value: hasSite,
+              set: (v: boolean) => {
+                setHasSite(v);
+                if (v) setNoSite(false);
+              },
+            },
+            {
+              label: "Sem site",
+              value: noSite,
+              set: (v: boolean) => {
+                setNoSite(v);
+                if (v) setHasSite(false);
+              },
+            },
+            { label: "GMN não reivindicado", value: gbpUnclaimed, set: setGbpUnclaimed },
+            { label: "Tem dono", value: hasOwner, set: setHasOwner },
           ].map(({ label, value, set }) => (
             <button
               key={label}
@@ -364,7 +427,7 @@ export function TriageTable({
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto overflow-x-auto">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
@@ -377,7 +440,7 @@ export function TriageTable({
             </p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[1100px] text-sm">
             <thead className="sticky top-0 bg-zinc-950 z-10">
               <tr className="border-b border-zinc-800 text-left">
                 <th className="p-3 w-10">
@@ -395,16 +458,25 @@ export function TriageTable({
                   Localização
                 </th>
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Contato
+                  Telefone
                 </th>
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Rating
+                  WhatsApp
+                </th>
+                <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  E-mail
+                </th>
+                <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Site
                 </th>
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
                   Instagram
                 </th>
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  Google Maps
+                  Rating
+                </th>
+                <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
+                  Google Meu Negócio
                 </th>
                 <th className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
                   Dono
@@ -439,47 +511,62 @@ export function TriageTable({
                   <td className="p-3 text-zinc-400 text-xs">
                     {result.city}, {result.state}
                   </td>
-                  <td className="p-3">
-                    {result.email && (
-                      <p className="text-xs text-zinc-300 truncate max-w-40">{result.email}</p>
+                  <td className="p-3 whitespace-nowrap">
+                    {result.phone ? (
+                      <span className="text-xs text-zinc-300">{result.phone}</span>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
                     )}
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      {result.phone && (
-                        <span className="text-xs text-zinc-500">{result.phone}</span>
-                      )}
-                      {result.whatsappStatus === "likely" && (
-                        <span
-                          title="Provável WhatsApp (heurística por formato do número)"
-                          className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400"
-                        >
-                          WhatsApp
-                        </span>
-                      )}
-                    </div>
-                    {result.website && (
+                  </td>
+                  <td className="p-3 whitespace-nowrap">
+                    {result.whatsappNumber ? (
+                      <a
+                        href={`https://wa.me/${result.whatsappNumber}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={
+                          result.whatsappStatus === "likely"
+                            ? "Provável WhatsApp — heurística pelo formato do número, não verificado"
+                            : "Número de WhatsApp"
+                        }
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                      >
+                        Abrir
+                        {result.whatsappStatus === "likely" && (
+                          <span className="text-emerald-600/80">?</span>
+                        )}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {result.email ? (
+                      <a
+                        href={`mailto:${result.email}`}
+                        onClick={(e) => e.stopPropagation()}
+                        title={result.email}
+                        className="text-xs text-zinc-300 hover:text-indigo-400 truncate block max-w-44 transition-colors"
+                      >
+                        {result.email}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {result.website ? (
                       <a
                         href={result.website}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 truncate block max-w-32 mt-0.5"
+                        title={result.website}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 truncate block max-w-40"
                       >
-                        {result.website.replace(/^https?:\/\//, "")}
+                        {result.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                       </a>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {result.rating ? (
-                      <div>
-                        <span className="text-xs font-medium text-zinc-300">
-                          {result.rating.toFixed(1)} ★
-                        </span>
-                        {result.reviewsCount && (
-                          <span className="text-xs text-zinc-600 ml-1">
-                            ({result.reviewsCount})
-                          </span>
-                        )}
-                      </div>
                     ) : (
                       <span className="text-xs text-zinc-700">—</span>
                     )}
@@ -500,22 +587,44 @@ export function TriageTable({
                     )}
                   </td>
                   <td className="p-3">
-                    {result.isOnGoogleMaps ? (
-                      result.googleMapsUrl ? (
-                        <a
-                          href={result.googleMapsUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs text-zinc-400 hover:text-indigo-400 transition-colors"
-                        >
-                          Ver no Maps ↗
-                        </a>
-                      ) : (
-                        <span className="text-xs text-zinc-500">Sim</span>
-                      )
+                    {result.rating ? (
+                      <div>
+                        <span className="text-xs font-medium text-zinc-300">
+                          {result.rating.toFixed(1)} ★
+                        </span>
+                        {result.reviewsCount && (
+                          <span className="text-xs text-zinc-600 ml-1">
+                            ({result.reviewsCount})
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 whitespace-nowrap">
+                    {result.gbpStatus === "unclaimed" ? (
+                      <span
+                        title="Perfil sem dono no Google Meu Negócio — oportunidade de abordagem"
+                        className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400"
+                      >
+                        Não reivindicado
+                      </span>
+                    ) : result.gbpStatus === "claimed" ? (
+                      <span className="text-xs text-zinc-500">Reivindicado</span>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                    {result.googleMapsUrl && (
+                      <a
+                        href={result.googleMapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="block text-[11px] text-zinc-600 hover:text-indigo-400 transition-colors mt-0.5"
+                      >
+                        Ver no Maps ↗
+                      </a>
                     )}
                   </td>
                   <td className="p-3" onClick={(e) => e.stopPropagation()}>
