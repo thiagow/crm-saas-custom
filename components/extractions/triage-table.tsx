@@ -1,6 +1,7 @@
 "use client";
 
-import { deepEnrichResults, getEnrichmentStatus } from "@/lib/enrichment/actions";
+import { estimateDeepSearchCostUsd } from "@/lib/apify/cost";
+import { deepEnrichResults, getEnrichmentStatus, validateEmails } from "@/lib/enrichment/actions";
 import {
   discardResults,
   getTriageResults,
@@ -48,6 +49,8 @@ export function TriageTable({
   const [noSite, setNoSite] = useState(false);
   const [gbpUnclaimed, setGbpUnclaimed] = useState(false);
   const [hasOwner, setHasOwner] = useState(false);
+  const [emailValidated, setEmailValidated] = useState(false);
+  const [includeInstagram, setIncludeInstagram] = useState(false);
   const [minRating, setMinRating] = useState<number | undefined>();
   const [orderBy, setOrderBy] = useState<"rating" | "reviews" | "name">("rating");
 
@@ -77,6 +80,7 @@ export function TriageTable({
         noSite: noSite || undefined,
         gbpUnclaimed: gbpUnclaimed || undefined,
         hasOwner: hasOwner || undefined,
+        emailValidated: emailValidated || undefined,
         minRating,
         orderBy,
         page: 1,
@@ -100,6 +104,7 @@ export function TriageTable({
     noSite,
     gbpUnclaimed,
     hasOwner,
+    emailValidated,
     minRating,
     orderBy,
   ]);
@@ -194,8 +199,9 @@ export function TriageTable({
             : `${promoted} leads criados no Kanban`,
         );
         await loadResults();
-      } catch {
-        toast.error("Erro ao promover leads");
+      } catch (err) {
+        console.error(err);
+        toast.error(err instanceof Error ? err.message : "Erro ao promover leads");
       }
     });
   }
@@ -235,7 +241,12 @@ export function TriageTable({
             }),
           );
           const stillInFlight = statuses.some(
-            (s) => s.deepStatus === "queued" || s.deepStatus === "running",
+            (s) =>
+              s.deepStatus === "queued" ||
+              s.deepStatus === "running" ||
+              s.instagramDeepStatus === "queued" ||
+              s.instagramDeepStatus === "running" ||
+              s.emailValidationStatus === "queued",
           );
           if (!stillInFlight) clearInterval(pollIntervalRef.current);
         } catch {
@@ -252,14 +263,18 @@ export function TriageTable({
     };
   }, []);
 
-  function runDeepSearch(resultIds: string[]) {
+  function runDeepSearch(resultIds: string[], instagram: boolean) {
     if (resultIds.length === 0) return;
     setResults((prev) =>
-      prev.map((r) => (resultIds.includes(r.id) ? { ...r, deepStatus: "queued" } : r)),
+      prev.map((r) =>
+        resultIds.includes(r.id)
+          ? { ...r, deepStatus: "queued", ...(instagram ? { instagramDeepStatus: "queued" } : {}) }
+          : r,
+      ),
     );
     startTransition(async () => {
       try {
-        const { queued, skipped } = await deepEnrichResults({ projectSlug, resultIds });
+        const { queued, skipped } = await deepEnrichResults({ projectSlug, resultIds, instagram });
         if (queued > 0) {
           toast.success(
             queued === 1
@@ -273,6 +288,30 @@ export function TriageTable({
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao iniciar pesquisa profunda");
+      }
+    });
+  }
+
+  // ─── Validação de e-mail (Bouncer) ────────────────────────────────────────────
+  function runValidateEmails(resultIds: string[]) {
+    if (resultIds.length === 0) return;
+    setResults((prev) =>
+      prev.map((r) => (resultIds.includes(r.id) ? { ...r, emailValidationStatus: "queued" } : r)),
+    );
+    startTransition(async () => {
+      try {
+        const { queued, skipped } = await validateEmails({ projectSlug, resultIds });
+        if (queued > 0) {
+          toast.success(
+            queued === 1 ? "Validação de e-mail iniciada" : `Validando ${queued} e-mails`,
+          );
+          pollDeepSearchStatus(resultIds);
+        }
+        if (skipped > 0 && queued === 0) {
+          toast.info("Nada para validar — selecione resultados com e-mail");
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao validar e-mails");
       }
     });
   }
@@ -341,13 +380,34 @@ export function TriageTable({
               >
                 Promover {selected.size} a leads →
               </button>
+              <label
+                className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer select-none"
+                title={`Também busca bio/seguidores do Instagram — 1 requisição paga por resultado (até US$ ${estimateDeepSearchCostUsd(selected.size, { instagram: true }).toFixed(2)} no total)`}
+              >
+                <input
+                  type="checkbox"
+                  checked={includeInstagram}
+                  onChange={(e) => setIncludeInstagram(e.target.checked)}
+                  className="accent-indigo-500"
+                />
+                + Instagram (~US${" "}
+                {estimateDeepSearchCostUsd(selected.size, { instagram: true }).toFixed(2)})
+              </label>
               <button
                 type="button"
-                onClick={() => runDeepSearch(Array.from(selected))}
-                title="Busca nome do dono/responsável via CNPJ (Receita Federal)"
+                onClick={() => runDeepSearch(Array.from(selected), includeInstagram)}
+                title="Busca nome do dono/responsável via CNPJ (Receita Federal), opcionalmente + bio do Instagram"
                 className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-indigo-700 hover:text-indigo-300 transition-colors"
               >
                 Pesquisa profunda ({selected.size})
+              </button>
+              <button
+                type="button"
+                onClick={() => runValidateEmails(Array.from(selected))}
+                title="Valida os e-mails encontrados via Bouncer antes de usá-los numa cadência — protege a reputação do domínio de envio"
+                className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-emerald-700 hover:text-emerald-300 transition-colors"
+              >
+                Validar e-mails
               </button>
               <button
                 type="button"
@@ -385,6 +445,7 @@ export function TriageTable({
             },
             { label: "GMN não reivindicado", value: gbpUnclaimed, set: setGbpUnclaimed },
             { label: "Tem dono", value: hasOwner, set: setHasOwner },
+            { label: "E-mail validado", value: emailValidated, set: setEmailValidated },
           ].map(({ label, value, set }) => (
             <button
               key={label}
@@ -543,14 +604,43 @@ export function TriageTable({
                   </td>
                   <td className="p-3">
                     {result.email ? (
-                      <a
-                        href={`mailto:${result.email}`}
-                        onClick={(e) => e.stopPropagation()}
-                        title={result.email}
-                        className="text-xs text-zinc-300 hover:text-indigo-400 truncate block max-w-44 transition-colors"
-                      >
-                        {result.email}
-                      </a>
+                      <div className="flex items-center gap-1.5">
+                        <a
+                          href={`mailto:${result.email}`}
+                          onClick={(e) => e.stopPropagation()}
+                          title={result.email}
+                          className="text-xs text-zinc-300 hover:text-indigo-400 truncate block max-w-40 transition-colors"
+                        >
+                          {result.email}
+                        </a>
+                        {result.emailValidationStatus === "queued" && (
+                          <span
+                            title="Validando…"
+                            className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-zinc-700 border-t-emerald-500"
+                          />
+                        )}
+                        {result.emailValidationStatus === "deliverable" && (
+                          <span title="Bouncer: entregável" className="shrink-0 text-emerald-500">
+                            ✓
+                          </span>
+                        )}
+                        {result.emailValidationStatus === "undeliverable" && (
+                          <span
+                            title={`Bouncer: não entregável${result.emailValidationReason ? ` (${result.emailValidationReason})` : ""}`}
+                            className="shrink-0 text-red-500"
+                          >
+                            ✕
+                          </span>
+                        )}
+                        {result.emailValidationStatus === "risky" && (
+                          <span
+                            title={`Bouncer: arriscado${result.emailValidationReason ? ` (${result.emailValidationReason})` : ""}`}
+                            className="shrink-0 text-amber-500"
+                          >
+                            ⚠
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-xs text-zinc-700">—</span>
                     )}
@@ -643,7 +733,7 @@ export function TriageTable({
                     ) : result.deepStatus === "failed" || result.deepStatus === "partial" ? (
                       <button
                         type="button"
-                        onClick={() => runDeepSearch([result.id])}
+                        onClick={() => runDeepSearch([result.id], false)}
                         title={result.deepError ?? "Tentar de novo"}
                         className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
                       >
@@ -652,7 +742,7 @@ export function TriageTable({
                     ) : (
                       <button
                         type="button"
-                        onClick={() => runDeepSearch([result.id])}
+                        onClick={() => runDeepSearch([result.id], false)}
                         className="text-xs text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-indigo-400 transition-all"
                       >
                         Pesquisa profunda

@@ -57,6 +57,13 @@
       "when": 1787962755357,
       "tag": "0007_kind_kree",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788817134514,
+      "tag": "0008_minor_phantom_reporter",
+      "breakpoints": true
     }
   ]
 }

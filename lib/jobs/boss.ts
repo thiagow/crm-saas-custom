@@ -52,6 +52,15 @@ const QUEUE_DEFINITIONS = [
   // A dead website is a normal outcome, so retries are low: retrying an unreachable host
   // three times just burns worker budget.
   { name: "enrich:site", retryLimit: 1, retryDelay: 60, expireInSeconds: 60 },
+  // Instagram detail (bio/followers) — one paid Apify run per result. See
+  // lib/apify/instagram-deep-handler.ts. -start is real work (low retries, like the
+  // extraction pipeline's own -start); -poll is a wait-loop and gets more retries so a
+  // missed poll never orphans a run that's already been paid for.
+  { name: "enrich:instagram-start", retryLimit: 2, retryDelay: 30, expireInSeconds: 60 },
+  { name: "enrich:instagram-poll", retryLimit: 5, retryDelay: 15, expireInSeconds: 60 },
+  // Bouncer e-mail validation — lib/enrichment/bouncer-job-handler.ts. Low retry: a
+  // transient Bouncer 5xx is rare and retrying costs a credit each time.
+  { name: "enrich:validate-email", retryLimit: 1, retryDelay: 30, expireInSeconds: 60 },
 ] as const satisfies readonly (PgBoss.Queue & { name: string })[];
 
 /**

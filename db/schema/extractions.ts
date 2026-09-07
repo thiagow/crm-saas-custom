@@ -55,6 +55,19 @@ export const deepSearchStatusEnum = pgEnum("deep_search_status", [
   "failed",
 ]);
 
+/** Result of validating `email` against Bouncer before it's used in an outbound cadence.
+ *  Mirrors Bouncer's own status vocabulary (docs.usebouncer.com) so no translation layer
+ *  is needed between what the API returns and what's stored. */
+export const emailValidationStatusEnum = pgEnum("email_validation_status", [
+  "none",
+  "queued",
+  "deliverable",
+  "undeliverable",
+  "risky",
+  "unknown",
+  "failed",
+]);
+
 /**
  * Whether the business has claimed its Google Business Profile ("Google Meu Negócio").
  *
@@ -193,6 +206,15 @@ export const extractionResults = pgTable(
     // Instagram detail (only populated by the paid "pesquisa profunda" deep-search step)
     instagramFollowers: integer("instagram_followers"),
     instagramVerified: boolean("instagram_verified"),
+    instagramBio: text("instagram_bio"),
+    /** Apify run id for the per-result Instagram profile fetch (buildDeepSearchInput —
+     *  see lib/apify/actors.ts). Separate from apifyRunId on `extractions` because this
+     *  is one run per result, not per extraction. Null once ingested. */
+    instagramDeepRunId: text("instagram_deep_run_id"),
+    /** Async status of the Instagram-detail fetch — separate from `deepStatus` (CNPJ/QSA)
+     *  because that step is synchronous while this one polls a real Apify run. */
+    instagramDeepStatus: deepSearchStatusEnum("instagram_deep_status").notNull().default("none"),
+    instagramDeepError: text("instagram_deep_error"),
     // Owner / company (from CNPJ lookup — "pesquisa profunda" step, see lib/enrichment/cnpj.ts + receita.ts)
     ownerName: text("owner_name"),
     ownerRole: text("owner_role"), // e.g. "Sócio-Administrador"
@@ -211,6 +233,15 @@ export const extractionResults = pgTable(
      *  Doubles as the atomic claim marker so two workers never crawl the same site —
      *  it is set by the same UPDATE ... RETURNING that selects the batch. */
     siteEnrichedAt: timestamp("site_enriched_at", { mode: "date" }),
+    /** Result of validating `email` against Bouncer — see lib/enrichment/bouncer.ts.
+     *  Run explicitly (costs money per check), never automatically on every row. */
+    emailValidationStatus: emailValidationStatusEnum("email_validation_status")
+      .notNull()
+      .default("none"),
+    emailValidatedAt: timestamp("email_validated_at", { mode: "date" }),
+    /** Bouncer's reason code (e.g. "accepted_email", "low_deliverability") — kept verbatim
+     *  for anyone auditing why an address was excluded from a cadence. */
+    emailValidationReason: text("email_validation_reason"),
     // Raw API response for future enrichment
     raw: jsonb("raw").default({}).notNull(),
     // Triage state
