@@ -49,6 +49,18 @@ export interface ApifyGoogleMapsItem {
     isBusinessAccount?: boolean;
     accountVerificationStatus?: boolean;
     profileURL: string;
+    /**
+     * ⚠️ Field names not yet confirmed against a real run of this actor with
+     * scrapeSocialMediaProfiles.instagrams on — actors.ts documents that path as built
+     * but never invoked (see EXTRACTION_PIPELINE_PENDING.md #6, cut for cost reasons).
+     * `biography`/`externalUrl` are the field names Apify's own Instagram scrapers
+     * (apify/instagram-profile-scraper) publish; kept optional and read defensively so a
+     * mismatch degrades to "no bio found" instead of a crash. Confirm with
+     * scripts/test-deep-search.ts --instagram against one real result before relying on
+     * this in production, then delete this note.
+     */
+    biography?: string;
+    externalUrl?: string;
   }>; // present only when scrapeSocialMediaProfiles.instagrams is on (paid deep-search step)
   [key: string]: unknown;
 }

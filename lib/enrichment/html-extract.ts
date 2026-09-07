@@ -106,3 +106,22 @@ export function extractWhatsappNumbers(html: string): string[] {
   }
   return [...found];
 }
+
+/**
+ * Every absolute http(s) link on the page — href attributes plus bare URLs in text,
+ * since a "link-in-bio" page (Linktree, Beacons, Instagram bio) as often prints the URL
+ * as plain text as it does as an anchor. Document order, de-duplicated.
+ *
+ * Deliberately not filtered by kind here — lib/enrichment/link-classifier.ts decides
+ * what each one is; this function only finds candidates.
+ */
+export function extractOutboundLinks(html: string): string[] {
+  const found = new Set<string>();
+  for (const match of html.matchAll(/href=["']?(https?:\/\/[^"'\s>]+)/gi)) {
+    if (match[1]) found.add(match[1]);
+  }
+  for (const match of html.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+    found.add(match[0]);
+  }
+  return [...found];
+}

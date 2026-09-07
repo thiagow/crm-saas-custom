@@ -10,12 +10,22 @@
  *                                           (lib/enrichment/site-job-handler.ts).
  * enrich:deep                            → "pesquisa profunda" CNPJ/QSA owner lookup
  *                                           (lib/enrichment/job-handler.ts).
+ * enrich:instagram-start / poll          → "pesquisa profunda" Instagram detail (bio,
+ *                                           followers, e-mail-in-bio) — one Apify run per
+ *                                           result (lib/apify/instagram-deep-handler.ts).
+ * enrich:validate-email                  → Bouncer e-mail validation, on demand
+ *                                           (lib/enrichment/bouncer-job-handler.ts).
  */
+import {
+  handleInstagramDeepPoll,
+  handleInstagramDeepStart,
+} from "@/lib/apify/instagram-deep-handler";
 import {
   handleExtractionIngest,
   handleExtractionPoll,
   handleExtractionStart,
 } from "@/lib/apify/job-handler";
+import { handleValidateEmail } from "@/lib/enrichment/bouncer-job-handler";
 import { handleEnrichDeep } from "@/lib/enrichment/job-handler";
 import { handleSiteEnrich } from "@/lib/enrichment/site-job-handler";
 import { processExtractionPage } from "@/lib/google-places/job-handler";
@@ -28,6 +38,9 @@ export const JOB_QUEUES = [
   "extraction:ingest",
   "enrich:site",
   "enrich:deep",
+  "enrich:instagram-start",
+  "enrich:instagram-poll",
+  "enrich:validate-email",
 ] as const;
 
 export type JobQueueName = (typeof JOB_QUEUES)[number];
@@ -41,4 +54,7 @@ export const JOB_HANDLERS: Record<JobQueueName, (data: any) => Promise<void>> = 
   "extraction:ingest": handleExtractionIngest,
   "enrich:site": handleSiteEnrich,
   "enrich:deep": handleEnrichDeep,
+  "enrich:instagram-start": handleInstagramDeepStart,
+  "enrich:instagram-poll": handleInstagramDeepPoll,
+  "enrich:validate-email": handleValidateEmail,
 };

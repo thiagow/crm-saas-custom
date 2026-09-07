@@ -99,9 +99,18 @@ Nenhum destes é bloqueante, mas ficaram pendentes:
 
 Documentado aqui só para não ser redescoberto como "esquecimento":
 
-- **Instagram detalhado** (seguidores, verificado, bio) via `scrapeSocialMediaProfiles` da Apify — o input builder existe em `lib/apify/actors.ts` (`buildDeepSearchInput`) mas **nunca é chamado**. Foi cortado porque custa ~US$ 0,10/perfil no plano Free da Apify (medido nesta sessão) — caro demais pra habilitar sem repensar o plano da conta. Se algum dia fizer sentido reativar: o código já está pronto, só falta encadear no `enrich:deep` job (`lib/enrichment/job-handler.ts`) e tratar o polling assíncrono do run da Apify (hoje o deep-search de CNPJ é 100% síncrono porque não usa Apify).
+- ~~**Instagram detalhado** (seguidores, verificado, bio) via `scrapeSocialMediaProfiles`~~ — **implementado em 2026-09-07** (pivot pro nicho de clínicas de estética/salões, que raramente têm site — ver `lib/apify/instagram-deep-handler.ts`, filas `enrich:instagram-start`/`enrich:instagram-poll`, opt-in via checkbox na triagem, custo mostrado via `estimateDeepSearchCostUsd`). ⚠️ Os nomes de campo `biography`/`externalUrl` no item do dataset (`lib/apify/mappers.ts`) **não foram confirmados contra um run real** com `scrapeSocialMediaProfiles.instagrams: true` — só o caminho sem essa opção foi validado (2026-08-20/28). Rodar `scripts/test-deep-search.ts` com essa flag e corrigir os nomes de campo se necessário antes de confiar nisso em produção.
 - **CNPJ via busca SERP** (`apify/google-search-scraper`) como fallback quando o resultado não tem site — só a busca no site (`lib/enrichment/site-cnpj.ts`) foi implementada. Resultados sem website nunca vão encontrar CNPJ hoje.
 - **CNPJ via bio do Instagram** — mesma lógica, não implementado.
+
+## 7. Novidades 2026-09-07 — pivot pra nichos locais (salões, clínicas de estética)
+
+Motivado por: boa parte desses negócios não tem site, só Instagram — as duas fontes de e-mail existentes (`site-enrich.ts`, `deep-search.ts`/CNPJ) exigiam um site com CNPJ visível.
+
+- **Resolver de Linktree/Beacons** (`lib/enrichment/linktree-resolve.ts`) — quando o campo `website` de um lugar aponta pra um link-in-bio (`socialLinks.linktree`, já classificado por `link-classifier.ts` mas nunca antes buscado), `enrich:site` agora busca essa página também. Grátis, automático.
+- **Instagram detalhado** — ver item 6 acima. Pago, opt-in, mostra custo antes de rodar.
+- **Validação de e-mail via Bouncer** (`lib/enrichment/bouncer.ts`, fila `enrich:validate-email`) — nenhuma das fontes de e-mail acima confirma que a caixa existe de fato. Ação explícita na triagem ("Validar e-mails"), nunca automática. Requer `BOUNCER_API_KEY` no `.env`. ⚠️ Endpoint/formato de resposta vieram da documentação pública, não testados contra uma chave real — confirmar com uma chamada real antes de depender disso.
+- Nova coluna de filtro "E-mail validado" na triagem (`emailValidationStatus === 'deliverable'`) — é a lista que de fato deveria alimentar uma cadência de e-mail, ao contrário de "Tem e-mail" (que só diz que uma string parecida com e-mail foi encontrada em algum lugar).
 
 ---
 

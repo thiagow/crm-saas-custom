@@ -6,7 +6,7 @@ import { auth, getIsOwner } from "@/lib/auth";
 import { requireRole } from "@/lib/auth/rbac";
 import { db } from "@/lib/db/client";
 import { forProject } from "@/lib/db/for-project";
-import { and, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertExtractionAllowed } from "./limits";
@@ -270,6 +270,9 @@ const getTriageResultsSchema = z.object({
   /** Unclaimed Google Business Profile — see gbpStatusEnum. */
   gbpUnclaimed: z.boolean().optional(),
   hasOwner: z.boolean().optional(),
+  /** E-mail confirmed deliverable by Bouncer — the list that's actually safe to load
+   *  into an outbound cadence, as opposed to every scraped address. */
+  emailValidated: z.boolean().optional(),
   minRating: z.number().optional(),
   minReviews: z.number().optional(),
   orderBy: z.enum(["rating", "reviews", "name"]).default("rating"),
@@ -303,6 +306,7 @@ export async function getTriageResults(input: z.infer<typeof getTriageResultsSch
     ...(data.noSite ? [isNull(extractionResults.website)] : []),
     ...(data.gbpUnclaimed ? [eq(extractionResults.gbpStatus, "unclaimed")] : []),
     ...(data.hasOwner ? [isNotNull(extractionResults.ownerName)] : []),
+    ...(data.emailValidated ? [eq(extractionResults.emailValidationStatus, "deliverable")] : []),
     ...(data.minRating ? [gte(extractionResults.rating, data.minRating)] : []),
     ...(data.minReviews ? [gte(extractionResults.reviewsCount, data.minReviews)] : []),
   ];
@@ -408,7 +412,15 @@ export async function promoteResultsToLeads(input: z.infer<typeof promoteLeadsSc
           },
         })),
       )
-      .onConflictDoNothing({ target: [leads.projectId, leads.placeId] })
+      // `leads_project_place_uq` (db/migrations/0004) is a *partial* unique index
+      // (`WHERE place_id IS NOT NULL`) — Postgres only infers a partial index as the
+      // ON CONFLICT arbiter when the clause repeats its exact predicate. Without the
+      // `where` below, Postgres can't match it and throws 42P10 ("no unique or
+      // exclusion constraint matching the ON CONFLICT specification").
+      .onConflictDoNothing({
+        target: [leads.projectId, leads.placeId],
+        where: sql`${leads.placeId} is not null`,
+      })
       .returning({ id: leads.id, placeId: leads.placeId });
 
     // Match by placeId, not array position — onConflictDoNothing can skip rows,
