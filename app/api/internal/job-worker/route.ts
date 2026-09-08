@@ -2,10 +2,18 @@
  * Job worker API route — processes pg-boss extraction jobs.
  *
  * Redundancy for the primary path (netlify/functions/job-worker.ts, a Scheduled Function
- * running every minute). Point an external cron at it — cron-job.org or similar — every
- * 5 minutes, so a broken schedule degrades the pipeline instead of stopping it:
+ * running every minute — confirmed twice, on unrelated deploys, to sometimes just stop
+ * firing with function_schedules still registered and no error logged anywhere).
+ *
+ * Two ways to trigger it, because uptime-monitor free tiers are picky about method:
  *   POST https://crm.techhive.com.br/api/internal/job-worker
- *   Header: x-worker-secret: <WORKER_SECRET>
+ *     Header: x-worker-secret: <WORKER_SECRET>
+ *   GET/HEAD https://crm.techhive.com.br/api/internal/job-worker?secret=<WORKER_SECRET>
+ *     (GET also accepts the header instead of the query param; HEAD runs the same drain
+ *     but returns no body, per HTTP semantics — Next.js dispatches HEAD to this handler
+ *     automatically since there's no separate HEAD export)
+ * The query-param form exists specifically for UptimeRobot's free plan, which only sends
+ * GET/HEAD — never POST — on its HTTP(s) monitor type.
  *
  * Excluded from the auth middleware (see middleware.ts) — the secret is the only gate.
  */
@@ -32,12 +40,7 @@ function isValidWorkerSecret(provided: string | null): boolean {
   return timingSafeEqual(sha256(provided), sha256(expected));
 }
 
-export async function POST() {
-  const secret = (await headers()).get("x-worker-secret");
-  if (!isValidWorkerSecret(secret)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+async function runDrain(): Promise<NextResponse> {
   try {
     const boss = await getBoss({ role: "worker" });
 
@@ -60,4 +63,23 @@ export async function POST() {
       { status: 500 },
     );
   }
+}
+
+export async function POST() {
+  const secret = (await headers()).get("x-worker-secret");
+  if (!isValidWorkerSecret(secret)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return runDrain();
+}
+
+/** Also handles HEAD automatically (Next.js falls back to GET when no HEAD export
+ *  exists) — a HEAD request still runs the drain, it just returns without a body. */
+export async function GET(req: Request) {
+  const secretFromQuery = new URL(req.url).searchParams.get("secret");
+  const secretFromHeader = (await headers()).get("x-worker-secret");
+  if (!isValidWorkerSecret(secretFromQuery ?? secretFromHeader)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return runDrain();
 }
