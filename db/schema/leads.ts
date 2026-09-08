@@ -16,6 +16,18 @@ import { projects } from "./projects";
 
 export const leadSourceEnum = pgEnum("lead_source", ["google_maps", "csv_import", "manual"]);
 
+/** Shape of the `customFields` jsonb blob written at promotion time
+ *  (see lib/extractions/actions.ts promoteResultsToLeads). Not exhaustive — arbitrary
+ *  future keys are still allowed — but `extractionId` is what a leads-filter-by-origin
+ *  feature reads back, so it's worth naming here instead of leaving `customFields`
+ *  entirely untyped. */
+export interface LeadCustomFields {
+  extractionId?: string;
+  cnaeDescription?: string | null;
+  companyStatus?: string | null;
+  [key: string]: unknown;
+}
+
 // Re-declared locally (same PG enum name + values as db/schema/extractions.ts) rather
 // than imported from there — extractions.ts already imports `leads` for its
 // promoted_lead_id FK, so importing the other way would create a circular dependency
@@ -85,7 +97,7 @@ export const leads = pgTable(
     source: leadSourceEnum("source").notNull().default("manual"),
     value: doublePrecision("value"), // estimated deal value in BRL
     tags: text("tags").array().default([]).notNull(),
-    customFields: jsonb("custom_fields").default({}).notNull(),
+    customFields: jsonb("custom_fields").$type<LeadCustomFields>().default({}).notNull(),
     // Google Places reference (if sourced from extraction). No FK to extraction_results
     // here — extractions.ts already references leads.id (promoted_lead_id), and adding
     // the opposite-direction FK would create a circular import between the two schema files.

@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db/client";
 import { leads, pipelineStages, projects } from "@/db/schema";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { LeadsTable } from "@/components/leads/leads-table";
+import { getExtractionOptions } from "@/lib/extractions/actions";
 
 interface Props {
   params: Promise<{ project: string }>;
@@ -22,20 +23,26 @@ export default async function LeadsPage({ params }: Props) {
   });
   if (!project) notFound();
 
-  const [allLeads, stages] = await Promise.all([
+  const [allLeads, stages, extractionOptions] = await Promise.all([
     db.query.leads.findMany({
       where: eq(leads.projectId, project.id),
       with: { stage: true },
-      orderBy: [asc(leads.createdAt)],
+      orderBy: [desc(leads.createdAt)],
       limit: 500,
     }),
     db.query.pipelineStages.findMany({
       where: eq(pipelineStages.projectId, project.id),
       orderBy: [asc(pipelineStages.order)],
     }),
+    getExtractionOptions(projectSlug),
   ]);
 
   return (
-    <LeadsTable leads={allLeads} stages={stages} projectSlug={projectSlug} />
+    <LeadsTable
+      initialLeads={allLeads}
+      stages={stages}
+      projectSlug={projectSlug}
+      extractionOptions={extractionOptions}
+    />
   );
 }

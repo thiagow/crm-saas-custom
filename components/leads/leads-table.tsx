@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useRef, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Papa from "papaparse";
 import { toast } from "sonner";
 import { importLeadsFromCsv } from "@/lib/leads/csv-import";
-import { createLead, updateLead, deleteLead } from "@/lib/leads/actions";
+import { createLead, deleteLead, getLeadsFiltered, updateLead } from "@/lib/leads/actions";
+import type { ExtractionOption } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
 import { formatPhoneNumber } from "@/lib/phone-mask";
 import type { leads, pipelineStages } from "@/db/schema";
@@ -19,12 +20,126 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 interface LeadsTableProps {
-  leads: Lead[];
+  initialLeads: Lead[];
   stages: Stage[];
   projectSlug: string;
+  extractionOptions: ExtractionOption[];
 }
 
-export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
+export function LeadsTable({
+  initialLeads,
+  stages,
+  projectSlug,
+  extractionOptions,
+}: LeadsTableProps) {
+  const [leads, setLeads] = useState<Lead[]>(initialLeads);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
+
+  // Filters
+  const [hasEmail, setHasEmail] = useState(false);
+  const [hasSite, setHasSite] = useState(false);
+  const [hasInstagram, setHasInstagram] = useState(false);
+  const [hasWhatsapp, setHasWhatsapp] = useState(false);
+  const [gbpUnclaimed, setGbpUnclaimed] = useState(false);
+  const [cityFilter, setCityFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
+  const [extractionFilter, setExtractionFilter] = useState("");
+
+  const loadLeads = useCallback(async () => {
+    setLoading(true);
+    try {
+      const chosen = extractionOptions.find((o) => o.label === extractionFilter);
+      const data = await getLeadsFiltered({
+        projectSlug,
+        hasEmail: hasEmail || undefined,
+        hasSite: hasSite || undefined,
+        hasInstagram: hasInstagram || undefined,
+        hasWhatsapp: hasWhatsapp || undefined,
+        gbpUnclaimed: gbpUnclaimed || undefined,
+        city: cityFilter || undefined,
+        state: stateFilter || undefined,
+        extractionIds: chosen?.extractionIds,
+        page: 1,
+        pageSize: 500,
+      });
+      setLeads(data);
+      setSelected(new Set());
+    } catch {
+      toast.error("Erro ao carregar leads");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    projectSlug,
+    hasEmail,
+    hasSite,
+    hasInstagram,
+    hasWhatsapp,
+    gbpUnclaimed,
+    cityFilter,
+    stateFilter,
+    extractionFilter,
+    extractionOptions,
+  ]);
+
+  // Skip the redundant fetch on first mount — initialLeads already has the unfiltered
+  // set from the server component. Every filter change after that goes through here.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    void loadLeads();
+  }, [loadLeads]);
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelected((prev) =>
+      prev.size === leads.length ? new Set() : new Set(leads.map((l) => l.id)),
+    );
+  }
+
+  async function handleExportCsv() {
+    if (selected.size === 0) return;
+    setExporting(true);
+    try {
+      const response = await fetch("/api/leads/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectSlug, leadIds: Array.from(selected) }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? "Erro ao exportar CSV");
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const filenameMatch = disposition.match(/filename="([^"]+)"/);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filenameMatch?.[1] ?? "leads.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${selected.size} leads exportados`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao exportar CSV");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({
@@ -126,6 +241,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
         });
         toast.success("Lead atualizado");
         closeEditModal();
+        await loadLeads();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao atualizar lead");
       }
@@ -139,7 +255,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
     }
 
     const confirmed = window.confirm(
-      `Tem certeza que deseja excluir "${lead.name}"? Esta ação não pode ser desfeita.`
+      `Tem certeza que deseja excluir "${lead.name}"? Esta ação não pode ser desfeita.`,
     );
 
     if (!confirmed) return;
@@ -151,6 +267,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           leadId: lead.id,
         });
         toast.success("Lead excluído");
+        await loadLeads();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao excluir lead");
       }
@@ -206,6 +323,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           console.warn("CSV import errors:", result.errors);
         }
         setShowCsvModal(false);
+        await loadLeads();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro na importação");
       }
@@ -213,8 +331,26 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
   }
 
   function downloadTemplate() {
-    const headers = ["Nome", "Empresa", "Telefone", "Email", "Site", "Cidade", "Estado", "Instagram"];
-    const example = ["João Silva", "Academia Fight Club", "(11) 99999-0000", "joao@academia.com", "https://www.academia.com", "São Paulo", "SP", "@joao.silva"];
+    const headers = [
+      "Nome",
+      "Empresa",
+      "Telefone",
+      "Email",
+      "Site",
+      "Cidade",
+      "Estado",
+      "Instagram",
+    ];
+    const example = [
+      "João Silva",
+      "Academia Fight Club",
+      "(11) 99999-0000",
+      "joao@academia.com",
+      "https://www.academia.com",
+      "São Paulo",
+      "SP",
+      "@joao.silva",
+    ];
     const csv = [headers.join(","), example.join(",")].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -258,6 +394,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           instagramHandle: "",
           value: "",
         });
+        await loadLeads();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao criar lead");
       }
@@ -267,53 +404,143 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-        <div>
-          <h1 className="text-lg font-semibold text-zinc-100">Leads</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">{leads.length} leads no projeto</p>
+      <div className="p-4 border-b border-zinc-800 space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-zinc-100">Leads</h1>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              {leads.length} leads · {selected.size} selecionados
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+                e.target.value = "";
+              }}
+            />
+            {selected.size > 0 && (
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={exporting}
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"
+                  />
+                </svg>
+                {exporting ? "Exportando…" : `Exportar CSV (${selected.size})`}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowNewLeadModal(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
+              Novo lead
+            </button>
+            <button
+              type="button"
+              onClick={downloadTemplate}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V3"
+                />
+              </svg>
+              Template CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                />
+              </svg>
+              Importar CSV
+            </button>
+          </div>
         </div>
-        <div className="flex gap-2">
+
+        {/* Filters */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {[
+            { label: "Tem e-mail", value: hasEmail, set: setHasEmail },
+            { label: "Tem site", value: hasSite, set: setHasSite },
+            { label: "Tem Instagram", value: hasInstagram, set: setHasInstagram },
+            { label: "Tem WhatsApp", value: hasWhatsapp, set: setHasWhatsapp },
+            { label: "GMN não verificada", value: gbpUnclaimed, set: setGbpUnclaimed },
+          ].map(({ label, value, set }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => set(!value)}
+              className={cn(
+                "px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                value ? "bg-indigo-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700",
+              )}
+            >
+              {label}
+            </button>
+          ))}
           <input
-            ref={fileRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleFile(file);
-              e.target.value = "";
-            }}
+            type="text"
+            placeholder="Cidade"
+            value={cityFilter}
+            onChange={(e) => setCityFilter(e.target.value)}
+            className="w-28 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           />
-          <button
-            type="button"
-            onClick={() => setShowNewLeadModal(true)}
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
+          <input
+            type="text"
+            placeholder="UF"
+            value={stateFilter}
+            onChange={(e) => setStateFilter(e.target.value.toUpperCase())}
+            maxLength={2}
+            className="w-14 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          />
+          <select
+            value={extractionFilter}
+            onChange={(e) => setExtractionFilter(e.target.value)}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
-            </svg>
-            Novo lead
-          </button>
-          <button
-            type="button"
-            onClick={downloadTemplate}
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V3" />
-            </svg>
-            Template CSV
-          </button>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2 text-sm font-medium text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 transition-colors"
-          >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            Importar CSV
-          </button>
+            <option value="">Todas as extrações</option>
+            {extractionOptions.map((o) => (
+              <option key={o.label} value={o.label}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {loading && (
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+          )}
         </div>
       </div>
 
@@ -330,16 +557,37 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-zinc-950 z-10">
               <tr className="border-b border-zinc-800 text-left">
-                {["Empresa/Nome", "Contato", "Localização", "Estágio", "Fonte", "Ações"].map((h) => (
-                  <th key={h} className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                    {h}
-                  </th>
-                ))}
+                <th className="p-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={selected.size === leads.length && leads.length > 0}
+                    onChange={toggleSelectAll}
+                    className="accent-indigo-500"
+                  />
+                </th>
+                {["Empresa/Nome", "Contato", "Localização", "Estágio", "Fonte", "Ações"].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider"
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
               {leads.map((lead) => (
                 <tr key={lead.id} className="hover:bg-zinc-900/50 transition-colors">
+                  <td className="p-3 w-10" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(lead.id)}
+                      onChange={() => toggleSelected(lead.id)}
+                      className="accent-indigo-500"
+                    />
+                  </td>
                   <td className="p-3">
                     <p className="font-medium text-zinc-200">{lead.company ?? lead.name}</p>
                     {lead.company && <p className="text-xs text-zinc-500">{lead.name}</p>}
@@ -349,7 +597,8 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                     {lead.instagramHandle && <p>@{lead.instagramHandle}</p>}
                   </td>
                   <td className="p-3 text-xs text-zinc-400">
-                    {lead.city}{lead.state ? `, ${lead.state}` : ""}
+                    {lead.city}
+                    {lead.state ? `, ${lead.state}` : ""}
                   </td>
                   <td className="p-3">
                     <span className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
@@ -373,8 +622,18 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                         className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition-colors"
                         title="Editar lead"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        <svg
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1.5}
+                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                          />
                         </svg>
                       </button>
                       <button
@@ -382,10 +641,24 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                         onClick={() => handleDeleteLead(lead)}
                         disabled={lead.stage.name !== "Novo"}
                         className="inline-flex items-center justify-center h-8 w-8 rounded-md text-zinc-500 hover:bg-red-950 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
-                        title={lead.stage.name === "Novo" ? "Excluir lead" : "Pode ser excluído apenas no estágio Novo"}
+                        title={
+                          lead.stage.name === "Novo"
+                            ? "Excluir lead"
+                            : "Pode ser excluído apenas no estágio Novo"
+                        }
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        <svg
+                          className="h-4 w-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={1.5}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                          />
                         </svg>
                       </button>
                     </div>
@@ -424,9 +697,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                   </label>
                   <select
                     value={columnMap[key] ?? ""}
-                    onChange={(e) =>
-                      setColumnMap((prev) => ({ ...prev, [key]: e.target.value }))
-                    }
+                    onChange={(e) => setColumnMap((prev) => ({ ...prev, [key]: e.target.value }))}
                     className={cn(
                       "flex-1 rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500",
                       required && !columnMap[key] && "border-red-800",
@@ -463,11 +734,28 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
             {/* Preview */}
             {csvRows[0] && (
               <div className="mb-4 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-                <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">Prévia (linha 1)</p>
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-2">
+                  Prévia (linha 1)
+                </p>
                 <div className="text-xs text-zinc-400 space-y-0.5">
-                  <p>Nome: <span className="text-zinc-200">{columnMap["name"] ? csvRows[0][columnMap["name"]] : "—"}</span></p>
-                  <p>Telefone: <span className="text-zinc-200">{columnMap["phone"] ? csvRows[0][columnMap["phone"]] : "—"}</span></p>
-                  <p>Cidade: <span className="text-zinc-200">{columnMap["city"] ? csvRows[0][columnMap["city"]] : "—"}</span></p>
+                  <p>
+                    Nome:{" "}
+                    <span className="text-zinc-200">
+                      {columnMap["name"] ? csvRows[0][columnMap["name"]] : "—"}
+                    </span>
+                  </p>
+                  <p>
+                    Telefone:{" "}
+                    <span className="text-zinc-200">
+                      {columnMap["phone"] ? csvRows[0][columnMap["phone"]] : "—"}
+                    </span>
+                  </p>
+                  <p>
+                    Cidade:{" "}
+                    <span className="text-zinc-200">
+                      {columnMap["city"] ? csvRows[0][columnMap["city"]] : "—"}
+                    </span>
+                  </p>
                 </div>
               </div>
             )}
@@ -496,7 +784,10 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
       {/* New lead modal */}
       {showNewLeadModal && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setShowNewLeadModal(false)} />
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            onClick={() => setShowNewLeadModal(false)}
+          />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
             <h2 className="text-base font-semibold text-zinc-100 mb-4">Novo lead</h2>
 
@@ -513,9 +804,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                 { key: "value", label: "Valor (R$)", type: "number" },
               ].map(({ key, label, type }) => (
                 <div key={key}>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    {label}
-                  </label>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">{label}</label>
                   <input
                     type={type}
                     placeholder={label}
@@ -533,9 +822,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
               ))}
 
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">
-                  Estágio
-                </label>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">Estágio</label>
                 <select
                   value={targetStageId}
                   onChange={(e) => setTargetStageId(e.target.value)}
@@ -590,9 +877,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
                 { key: "value", label: "Valor (R$)", type: "number" },
               ].map(({ key, label, type }) => (
                 <div key={key}>
-                  <label className="block text-xs font-medium text-zinc-400 mb-1">
-                    {label}
-                  </label>
+                  <label className="block text-xs font-medium text-zinc-400 mb-1">{label}</label>
                   <input
                     type={type}
                     placeholder={label}
@@ -610,9 +895,7 @@ export function LeadsTable({ leads, stages, projectSlug }: LeadsTableProps) {
               ))}
 
               <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">
-                  Estágio
-                </label>
+                <label className="block text-xs font-medium text-zinc-400 mb-1">Estágio</label>
                 <select
                   value={targetStageId}
                   onChange={(e) => setTargetStageId(e.target.value)}
