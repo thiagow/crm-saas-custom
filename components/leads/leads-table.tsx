@@ -565,8 +565,18 @@ export function LeadsTable({
                     className="accent-indigo-500"
                   />
                 </th>
-                {["Empresa/Nome", "Contato", "Localização", "Estágio", "Fonte", "Ações"].map(
-                  (h) => (
+                {[
+                  "Empresa/Nome",
+                  "Contato",
+                  "Localização",
+                  "Site",
+                  "Instagram",
+                  "Rating",
+                  "Google Meu Negócio",
+                  "Estágio",
+                  "Fonte",
+                  "Ações",
+                ].map((h) => (
                     <th
                       key={h}
                       className="p-3 text-xs font-medium text-zinc-500 uppercase tracking-wider"
@@ -594,11 +604,83 @@ export function LeadsTable({
                   </td>
                   <td className="p-3 text-xs text-zinc-400 space-y-0.5">
                     {lead.phone && <p>{lead.phone}</p>}
-                    {lead.instagramHandle && <p>@{lead.instagramHandle}</p>}
+                    {lead.email && <p className="text-zinc-500">{lead.email}</p>}
                   </td>
                   <td className="p-3 text-xs text-zinc-400">
                     {lead.city}
                     {lead.state ? `, ${lead.state}` : ""}
+                  </td>
+                  <td className="p-3">
+                    {lead.website ? (
+                      <a
+                        href={lead.website}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={lead.website}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 truncate block max-w-40"
+                      >
+                        {lead.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {lead.instagramHandle ? (
+                      <a
+                        href={`https://instagram.com/${lead.instagramHandle}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs text-zinc-400 hover:text-indigo-400 transition-colors"
+                      >
+                        @{lead.instagramHandle}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {lead.rating ? (
+                      <div>
+                        <span className="text-xs font-medium text-zinc-300">
+                          {lead.rating.toFixed(1)} ★
+                        </span>
+                        {lead.reviewsCount && (
+                          <span className="text-xs text-zinc-600 ml-1">
+                            ({lead.reviewsCount})
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 whitespace-nowrap">
+                    {lead.gbpStatus === "unclaimed" ? (
+                      <span
+                        title="Perfil sem dono no Google Meu Negócio — oportunidade de abordagem"
+                        className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400"
+                      >
+                        Não reivindicado
+                      </span>
+                    ) : lead.gbpStatus === "claimed" ? (
+                      <span className="text-xs text-zinc-500">Reivindicado</span>
+                    ) : (
+                      <span className="text-xs text-zinc-700">—</span>
+                    )}
+                    {lead.googleMapsUrl && (
+                      <a
+                        href={lead.googleMapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="block text-[11px] text-zinc-600 hover:text-indigo-400 transition-colors mt-0.5"
+                      >
+                        Ver no Maps ↗
+                      </a>
+                    )}
                   </td>
                   <td className="p-3">
                     <span className="inline-flex items-center gap-1.5 text-xs text-zinc-400">
