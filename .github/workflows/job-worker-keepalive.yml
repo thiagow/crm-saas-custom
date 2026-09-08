@@ -1,0 +1,35 @@
+name: Job worker keepalive
+
+# Redundância para netlify/functions/job-worker.ts (Scheduled Function, cron "* * * * *"
+# no netlify.toml). Já aconteceu do schedule nativo da Netlify parar de disparar sem
+# nenhum erro visível nos logs, deixando extrações/enriquecimentos presos em "na fila"
+# indefinidamente (2026-09-07). app/api/internal/job-worker/route.ts foi construído
+# exatamente como plano B para esse cenário, mas nunca tinha sido acionado por nada.
+#
+# Roda a cada 5 minutos e chama esse endpoint de fallback — se o schedule nativo estiver
+# saudável, isso só reprocessa o que já teria sido processado (drainQueues é idempotente,
+# jobs completados não são reprocessados); se o schedule nativo tiver parado de novo, a
+# fila nunca fica presa por mais de ~5 minutos.
+#
+# Requer o secret JOB_WORKER_SECRET configurado em
+# Settings → Secrets and variables → Actions (mesmo valor de WORKER_SECRET no .env de produção).
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Drain job queues
+        run: |
+          status=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "https://crm.techhive.com.br/api/internal/job-worker" \
+            -H "x-worker-secret: ${{ secrets.JOB_WORKER_SECRET }}")
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          if [ "$status" != "200" ]; then
+            echo "::error::job-worker fallback endpoint returned $status"
+            exit 1
+          fi

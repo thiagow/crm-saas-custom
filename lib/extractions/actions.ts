@@ -572,3 +572,53 @@ export async function updateExtractionResult(input: z.infer<typeof updateExtract
     })
     .where(eq(extractionResults.id, data.resultId));
 }
+
+export interface ExtractionOption {
+  /** One extraction id is enough to filter by — see lib/leads/actions.ts getLeadsFiltered,
+   *  which resolves this back to every id sharing the same (query, city, state) tuple. */
+  extractionIds: string[];
+  query: string;
+  city: string;
+  state: string;
+  label: string;
+}
+
+/**
+ * Distinct "search identity" tuples (query, city, state) run for this project — powers
+ * the "filtrar por extração" dropdown on the Leads screen. Grouped rather than listed
+ * one-per-run because re-running the same search (e.g. to reach new places, see
+ * lib/extractions/overlap.ts) produces several `extractions` rows that should read as one
+ * option, not a duplicate entry per run.
+ */
+export async function getExtractionOptions(projectSlug: string): Promise<ExtractionOption[]> {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await forProject(project.id, session.user.id, getIsOwner(session));
+
+  const rows = await db
+    .select({
+      query: extractions.query,
+      city: extractions.city,
+      state: extractions.state,
+      ids: sql<string[]>`array_agg(${extractions.id})`,
+    })
+    .from(extractions)
+    .where(eq(extractions.projectId, project.id))
+    .groupBy(extractions.query, extractions.city, extractions.state)
+    .orderBy(extractions.query, extractions.city);
+
+  return rows.map((r) => ({
+    extractionIds: r.ids,
+    query: r.query,
+    city: r.city,
+    state: r.state,
+    label: `${r.query} — ${r.city}, ${r.state}`,
+  }));
+}

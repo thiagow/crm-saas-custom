@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth, getIsOwner } from "@/lib/auth";
 import { db } from "@/lib/db/client";
@@ -8,6 +8,68 @@ import { forProject } from "@/lib/db/for-project";
 import { activities, leads, pipelineStages, projects } from "@/db/schema";
 import { requireRole } from "@/lib/auth/rbac";
 import { z } from "zod";
+
+const getLeadsFilteredSchema = z.object({
+  projectSlug: z.string(),
+  hasEmail: z.boolean().optional(),
+  hasSite: z.boolean().optional(),
+  hasInstagram: z.boolean().optional(),
+  hasWhatsapp: z.boolean().optional(),
+  /** "GMN não verificada" — Google Business Profile ainda não reivindicado. */
+  gbpUnclaimed: z.boolean().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  /** Um ou mais ids de `extractions` — ver lib/extractions/actions.ts getExtractionOptions,
+   *  que já resolve o tuple (query, city, state) escolhido no filtro pra essa lista. */
+  extractionIds: z.array(z.string()).optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(500).default(200),
+});
+
+/** Listagem de leads com os mesmos filtros da triagem (lib/extractions/actions.ts
+ *  getTriageResults), espelhados nas colunas equivalentes de `leads`. Usada pela tela de
+ *  Leads tanto pra exibição quanto pra alimentar a seleção exportada em CSV
+ *  (app/api/leads/export/route.ts). */
+export async function getLeadsFiltered(input: z.infer<typeof getLeadsFilteredSchema>) {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const data = getLeadsFilteredSchema.parse(input);
+
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.slug, data.projectSlug),
+    columns: { id: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await forProject(project.id, session.user.id, getIsOwner(session));
+
+  const conditions = [
+    eq(leads.projectId, project.id),
+    ...(data.hasEmail ? [isNotNull(leads.email)] : []),
+    ...(data.hasSite ? [isNotNull(leads.website)] : []),
+    ...(data.hasInstagram ? [isNotNull(leads.instagramHandle)] : []),
+    ...(data.hasWhatsapp ? [isNotNull(leads.whatsapp)] : []),
+    ...(data.gbpUnclaimed ? [eq(leads.gbpStatus, "unclaimed")] : []),
+    ...(data.city ? [eq(leads.city, data.city)] : []),
+    ...(data.state ? [eq(leads.state, data.state)] : []),
+    // customFields is unindexed jsonb — a text-extraction scan, fine at current volume.
+    // See db/schema/leads.ts LeadCustomFields for the shape being read here.
+    ...(data.extractionIds && data.extractionIds.length > 0
+      ? [inArray(sql<string>`${leads.customFields}->>'extractionId'`, data.extractionIds)]
+      : []),
+  ];
+
+  const offset = (data.page - 1) * data.pageSize;
+
+  return db.query.leads.findMany({
+    where: and(...conditions),
+    with: { stage: true },
+    orderBy: [desc(leads.createdAt)],
+    limit: data.pageSize,
+    offset,
+  });
+}
 
 export async function getKanbanData(projectSlug: string) {
   const session = await auth();
