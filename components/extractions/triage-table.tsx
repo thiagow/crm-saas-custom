@@ -208,13 +208,19 @@ export function TriageTable({
 
   function handleDiscard() {
     if (selected.size === 0) return;
+    if (
+      selected.size > 10 &&
+      !confirm(`Excluir ${selected.size} empresas da triagem? Você pode trazê-las de volta em "Reativar descartados".`)
+    ) {
+      return;
+    }
     startTransition(async () => {
       try {
         await discardResults({ resultIds: Array.from(selected), projectSlug });
-        toast.success(`${selected.size} resultados descartados`);
+        toast.success(`${selected.size} empresas excluídas da triagem`);
         await loadResults();
       } catch {
-        toast.error("Erro ao descartar");
+        toast.error("Erro ao excluir");
       }
     });
   }
@@ -412,9 +418,10 @@ export function TriageTable({
               <button
                 type="button"
                 onClick={handleDiscard}
+                title="Remove da triagem — pode ser trazido de volta em 'Reativar descartados'"
                 className="rounded-lg border border-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-400 hover:border-red-800 hover:text-red-400 transition-colors"
               >
-                Descartar
+                Excluir
               </button>
             </div>
           )}

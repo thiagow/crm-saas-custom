@@ -46,6 +46,9 @@ export function LeadsTable({
   const [cityFilter, setCityFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [extractionFilter, setExtractionFilter] = useState("");
+  const [stageFilter, setStageFilter] = useState("");
+  const [sortBy, setSortBy] = useState<"createdAt" | "name">("createdAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -61,6 +64,9 @@ export function LeadsTable({
         city: cityFilter || undefined,
         state: stateFilter || undefined,
         extractionIds: chosen?.extractionIds,
+        stageId: stageFilter || undefined,
+        sortBy,
+        sortDir,
         page: 1,
         pageSize: 500,
       });
@@ -82,6 +88,9 @@ export function LeadsTable({
     stateFilter,
     extractionFilter,
     extractionOptions,
+    stageFilter,
+    sortBy,
+    sortDir,
   ]);
 
   // Skip the redundant fetch on first mount — initialLeads already has the unfiltered
@@ -538,6 +547,34 @@ export function LeadsTable({
               </option>
             ))}
           </select>
+          <select
+            value={stageFilter}
+            onChange={(e) => setStageFilter(e.target.value)}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">Todos os estágios</option>
+            {stages.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "createdAt" | "name")}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="createdAt">Ordenar por data de entrada</option>
+            <option value="name">Ordenar por nome</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+            title={sortDir === "asc" ? "Crescente" : "Decrescente"}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors"
+          >
+            {sortDir === "asc" ? "↑" : "↓"}
+          </button>
           {loading && (
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
           )}

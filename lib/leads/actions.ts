@@ -22,6 +22,9 @@ const getLeadsFilteredSchema = z.object({
   /** Um ou mais ids de `extractions` — ver lib/extractions/actions.ts getExtractionOptions,
    *  que já resolve o tuple (query, city, state) escolhido no filtro pra essa lista. */
   extractionIds: z.array(z.string()).optional(),
+  stageId: z.string().optional(),
+  sortBy: z.enum(["name", "createdAt"]).default("createdAt"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(500).default(200),
 });
@@ -53,6 +56,7 @@ export async function getLeadsFiltered(input: z.infer<typeof getLeadsFilteredSch
     ...(data.gbpUnclaimed ? [eq(leads.gbpStatus, "unclaimed")] : []),
     ...(data.city ? [eq(leads.city, data.city)] : []),
     ...(data.state ? [eq(leads.state, data.state)] : []),
+    ...(data.stageId ? [eq(leads.stageId, data.stageId)] : []),
     // customFields is unindexed jsonb — a text-extraction scan, fine at current volume.
     // See db/schema/leads.ts LeadCustomFields for the shape being read here.
     ...(data.extractionIds && data.extractionIds.length > 0
@@ -60,12 +64,15 @@ export async function getLeadsFiltered(input: z.infer<typeof getLeadsFilteredSch
       : []),
   ];
 
+  const orderField = data.sortBy === "name" ? leads.name : leads.createdAt;
+  const orderClause = data.sortDir === "asc" ? asc(orderField) : desc(orderField);
+
   const offset = (data.page - 1) * data.pageSize;
 
   return db.query.leads.findMany({
     where: and(...conditions),
     with: { stage: true },
-    orderBy: [desc(leads.createdAt)],
+    orderBy: [orderClause],
     limit: data.pageSize,
     offset,
   });
