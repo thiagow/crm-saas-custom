@@ -13,6 +13,7 @@ import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortabl
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import type { getKanbanData } from "@/lib/leads/actions";
+import type { ExtractionOption } from "@/lib/extractions/actions";
 import { moveLead, createLead } from "@/lib/leads/actions";
 import { formatPhoneNumber } from "@/lib/phone-mask";
 import { KanbanColumn } from "./kanban-column";
@@ -26,9 +27,24 @@ type Stage = KanbanData["stages"][number];
 interface KanbanBoardProps {
   initialData: KanbanData;
   projectSlug: string;
+  extractionOptions: ExtractionOption[];
 }
 
-export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
+export function KanbanBoard({ initialData, projectSlug, extractionOptions }: KanbanBoardProps) {
+  // All leads are already loaded for the board, so the filter is applied at render time —
+  // leadsMap stays the unfiltered source of truth that drag-and-drop mutates.
+  const [extractionFilter, setExtractionFilter] = useState("");
+  const visibleExtractionIds = new Set(
+    extractionOptions.find((o) => o.label === extractionFilter)?.extractionIds,
+  );
+  function filterLeads(list: Lead[]): Lead[] {
+    if (!extractionFilter) return list;
+    return list.filter((l) => {
+      const id = (l.customFields as { extractionId?: string } | null)?.extractionId;
+      return id !== undefined && visibleExtractionIds.has(id);
+    });
+  }
+
   const [stages] = useState<Stage[]>(initialData.stages);
   const [leadsMap, setLeadsMap] = useState<Record<string, Lead[]>>(() => {
     const map: Record<string, Lead[]> = {};
@@ -198,6 +214,19 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
       {/* Header with create button */}
       <div className="border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-zinc-100">Kanban</h2>
+        <div className="flex items-center gap-2">
+        <select
+          value={extractionFilter}
+          onChange={(e) => setExtractionFilter(e.target.value)}
+          className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+        >
+          <option value="">Todas as extrações</option>
+          {extractionOptions.map((o) => (
+            <option key={o.label} value={o.label}>
+              {o.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           onClick={openCreateModal}
@@ -208,6 +237,7 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
           </svg>
           Novo Lead
         </button>
+        </div>
       </div>
 
       <div className="flex h-full gap-3 overflow-x-auto p-4">
@@ -217,7 +247,7 @@ export function KanbanBoard({ initialData, projectSlug }: KanbanBoardProps) {
               <KanbanColumn
                 key={stage.id}
                 stage={stage}
-                leads={leadsMap[stage.id] ?? []}
+                leads={filterLeads(leadsMap[stage.id] ?? [])}
                 projectSlug={projectSlug}
                 onLeadClick={setSelectedLead}
                 onLeadCreated={(lead) => handleLeadCreated(stage.id, lead)}

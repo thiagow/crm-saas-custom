@@ -3,6 +3,7 @@ import { pipelineStages, projects } from "@/db/schema";
 import { auth, getIsOwner } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { forProject } from "@/lib/db/for-project";
+import { getExtractionOptions } from "@/lib/extractions/actions";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { notFound, redirect } from "next/navigation";
 
@@ -30,11 +31,14 @@ export default async function TriagePage({ params, searchParams }: Props) {
   // could see another project's pipeline stage names/colors below.
   await forProject(project.id, session.user.id, getIsOwner(session));
 
-  const stages = await db.query.pipelineStages.findMany({
-    where: eq(pipelineStages.projectId, project.id),
-    orderBy: [asc(pipelineStages.order)],
-    columns: { id: true, name: true, color: true },
-  });
+  const [stages, extractionOptions] = await Promise.all([
+    db.query.pipelineStages.findMany({
+      where: eq(pipelineStages.projectId, project.id),
+      orderBy: [asc(pipelineStages.order)],
+      columns: { id: true, name: true, color: true },
+    }),
+    getExtractionOptions(projectSlug),
+  ]);
 
   const firstStage = stages[0];
   if (!firstStage) {
@@ -51,6 +55,7 @@ export default async function TriagePage({ params, searchParams }: Props) {
       stages={stages}
       defaultStageId={firstStage.id}
       initialExtractionId={extractionId}
+      extractionOptions={extractionOptions}
     />
   );
 }

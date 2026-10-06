@@ -260,6 +260,9 @@ export async function getExtractionStatus(extractionId: string, projectSlug: str
 const getTriageResultsSchema = z.object({
   projectSlug: z.string(),
   extractionId: z.string().optional(),
+  /** Vários ids de uma vez — o filtro por extração agrupa (query, city, state) em um
+   *  único item, ver getExtractionOptions. */
+  extractionIds: z.array(z.string()).optional(),
   hasPhone: z.boolean().optional(),
   hasSite: z.boolean().optional(),
   hasInstagram: z.boolean().optional(),
@@ -298,6 +301,9 @@ export async function getTriageResults(input: z.infer<typeof getTriageResultsSch
     eq(extractionResults.projectId, project.id),
     eq(extractionResults.status, "pending"),
     ...(data.extractionId ? [eq(extractionResults.extractionId, data.extractionId)] : []),
+    ...(data.extractionIds && data.extractionIds.length > 0
+      ? [inArray(extractionResults.extractionId, data.extractionIds)]
+      : []),
     ...(data.hasPhone ? [isNotNull(extractionResults.phone)] : []),
     ...(data.hasSite ? [isNotNull(extractionResults.website)] : []),
     ...(data.hasInstagram ? [isNotNull(extractionResults.instagramHandle)] : []),
@@ -472,6 +478,7 @@ export async function reactivateDiscardedResults(input: {
   projectSlug: string;
   /** Scope to one extraction; omit to reactivate every discarded result in the project. */
   extractionId?: string;
+  extractionIds?: string[];
 }) {
   const session = await auth();
   if (!session?.user?.id) throw new Error("Unauthorized");
@@ -492,6 +499,9 @@ export async function reactivateDiscardedResults(input: {
         eq(extractionResults.projectId, project.id),
         eq(extractionResults.status, "discarded"),
         ...(input.extractionId ? [eq(extractionResults.extractionId, input.extractionId)] : []),
+        ...(input.extractionIds && input.extractionIds.length > 0
+          ? [inArray(extractionResults.extractionId, input.extractionIds)]
+          : []),
       ),
     )
     .returning({ id: extractionResults.id });

@@ -9,6 +9,7 @@ import {
   reactivateDiscardedResults,
   updateExtractionResult,
 } from "@/lib/extractions/actions";
+import type { ExtractionOption } from "@/lib/extractions/actions";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -26,6 +27,7 @@ interface TriageTableProps {
   stages: Stage[];
   defaultStageId: string;
   initialExtractionId: string | undefined;
+  extractionOptions: ExtractionOption[];
 }
 
 export function TriageTable({
@@ -33,6 +35,7 @@ export function TriageTable({
   stages,
   defaultStageId,
   initialExtractionId,
+  extractionOptions,
 }: TriageTableProps) {
   const [results, setResults] = useState<TriageResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +55,15 @@ export function TriageTable({
   const [emailValidated, setEmailValidated] = useState(false);
   const [includeInstagram, setIncludeInstagram] = useState(false);
   const [minRating, setMinRating] = useState<number | undefined>();
+  // Deep link (?extractionId=…) pre-selects the option that groups that extraction.
+  const [extractionFilter, setExtractionFilter] = useState(
+    () =>
+      extractionOptions.find((o) => initialExtractionId && o.extractionIds.includes(initialExtractionId))
+        ?.label ?? "",
+  );
+  const chosenExtractionIds = extractionOptions.find(
+    (o) => o.label === extractionFilter,
+  )?.extractionIds;
   const [orderBy, setOrderBy] = useState<"rating" | "reviews" | "name">("rating");
 
   // Edit modal
@@ -71,7 +83,9 @@ export function TriageTable({
     try {
       const data = await getTriageResults({
         projectSlug,
-        extractionId: initialExtractionId,
+        // Unknown deep-link id (not in any option) still scopes the list, as before.
+        extractionId: extractionFilter ? undefined : initialExtractionId,
+        extractionIds: chosenExtractionIds,
         hasPhone: hasPhone || undefined,
         hasSite: hasSite || undefined,
         hasInstagram: hasInstagram || undefined,
@@ -96,6 +110,8 @@ export function TriageTable({
   }, [
     projectSlug,
     initialExtractionId,
+    extractionFilter,
+    chosenExtractionIds,
     hasPhone,
     hasSite,
     hasInstagram,
@@ -329,7 +345,11 @@ export function TriageTable({
       try {
         const { restored } = await reactivateDiscardedResults({
           projectSlug,
-          ...(initialExtractionId ? { extractionId: initialExtractionId } : {}),
+          ...(chosenExtractionIds
+            ? { extractionIds: chosenExtractionIds }
+            : initialExtractionId
+              ? { extractionId: initialExtractionId }
+              : {}),
         });
         if (restored === 0) {
           toast.info("Nenhum resultado descartado para reativar");
@@ -479,6 +499,18 @@ export function TriageTable({
               className="w-14 rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
+          <select
+            value={extractionFilter}
+            onChange={(e) => setExtractionFilter(e.target.value)}
+            className="rounded border border-zinc-800 bg-zinc-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">Todas as extrações</option>
+            {extractionOptions.map((o) => (
+              <option key={o.label} value={o.label}>
+                {o.label}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center gap-1.5 ml-auto">
             <span className="text-xs text-zinc-600">Ordenar:</span>
             <select
