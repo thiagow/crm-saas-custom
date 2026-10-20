@@ -2,7 +2,7 @@
 
 import { invites, projectMembers, users } from "@/db/schema";
 import { auth } from "@/lib/auth";
-import { createSetupToken } from "@/lib/auth/password-reset";
+import { createSetupToken, sendPasswordSetupEmail } from "@/lib/auth/password-reset";
 import { db } from "@/lib/db/client";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -151,6 +151,33 @@ export async function setUserActive(input: z.infer<typeof setActiveSchema>) {
     .where(eq(users.id, userId));
 
   revalidatePath("/settings/users");
+}
+
+// ─── Reset user password ──────────────────────────────────────────────────────
+// Emails the user a single-use link (24h) to choose a new password. The owner
+// never sees or sets the password; the current one stays valid until the link is used.
+
+const resetPasswordSchema = z.object({ userId: z.string().min(1) });
+
+export async function resetUserPassword(input: z.infer<typeof resetPasswordSchema>) {
+  const callerId = await requireOwner();
+  const { userId } = resetPasswordSchema.parse(input);
+
+  if (userId === callerId) {
+    throw new Error("Use “Esqueci minha senha” na tela de login para redefinir a sua.");
+  }
+
+  const target = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { email: true, isActive: true },
+  });
+  if (!target) throw new Error("Usuário não encontrado.");
+  if (!target.isActive) throw new Error("Usuário desativado. Reative-o antes de redefinir a senha.");
+
+  const token = await createSetupToken(target.email);
+  await sendPasswordSetupEmail(target.email, token);
+
+  return { email: target.email };
 }
 
 // ─── Revoke invite ────────────────────────────────────────────────────────────

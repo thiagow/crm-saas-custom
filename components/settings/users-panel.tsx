@@ -1,7 +1,17 @@
 "use client";
 
-import { inviteUser, revokeInvite, setUserActive } from "@/lib/users/actions";
-import { FolderOpenIcon, MailIcon, PlusIcon, ShieldOffIcon, Trash2Icon, UserCheckIcon } from "lucide-react";
+import { inviteUser, resetUserPassword, revokeInvite, setUserActive } from "@/lib/users/actions";
+import {
+  CheckIcon,
+  FolderOpenIcon,
+  KeyRoundIcon,
+  MailIcon,
+  PlusIcon,
+  ShieldOffIcon,
+  Trash2Icon,
+  UserCheckIcon,
+  XIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -57,6 +67,10 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
   const [inviteProjectId, setInviteProjectId] = useState<string>("");
   const [showInviteForm, setShowInviteForm] = useState(false);
 
+  // Password reset state
+  const [confirmResetId, setConfirmResetId] = useState<string | null>(null);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+
   function handleToggleActive(userId: string, currentActive: boolean) {
     startTransition(async () => {
       try {
@@ -67,6 +81,21 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
         toast.success(currentActive ? "Usuário desativado." : "Usuário reativado.");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao atualizar usuário");
+      }
+    });
+  }
+
+  function handleResetPassword(userId: string) {
+    setConfirmResetId(null);
+    setResettingId(userId);
+    startTransition(async () => {
+      try {
+        const { email } = await resetUserPassword({ userId });
+        toast.success(`Link de redefinição enviado para ${email}.`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Erro ao redefinir senha");
+      } finally {
+        setResettingId(null);
       }
     });
   }
@@ -249,6 +278,42 @@ export function UsersPanel({ users: initialUsers, pendingInvites: initialInvites
                   <FolderOpenIcon className="h-3.5 w-3.5" />
                 </Link>
               )}
+
+              {/* Reset password (emails a single-use link) */}
+              {!user.isOwner && user.isActive &&
+                (confirmResetId === user.id ? (
+                  <div className="flex flex-shrink-0 items-center gap-1">
+                    <span className="text-[11px] text-zinc-500">Enviar link?</span>
+                    <button
+                      type="button"
+                      onClick={() => handleResetPassword(user.id)}
+                      title="Confirmar envio"
+                      className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 hover:text-green-400 transition-colors"
+                    >
+                      <CheckIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmResetId(null)}
+                      title="Cancelar"
+                      className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmResetId(user.id)}
+                    disabled={resettingId === user.id}
+                    title="Redefinir senha (envia link por email)"
+                    className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded text-zinc-600 hover:bg-zinc-800 hover:text-amber-400 transition-colors disabled:opacity-40"
+                  >
+                    <KeyRoundIcon
+                      className={`h-3.5 w-3.5 ${resettingId === user.id ? "animate-pulse" : ""}`}
+                    />
+                  </button>
+                ))}
 
               {/* Toggle active (can't deactivate owners) */}
               {!user.isOwner && (

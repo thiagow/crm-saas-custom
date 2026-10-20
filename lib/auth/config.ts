@@ -6,6 +6,8 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 
+const REVALIDATE_MS = 30_000;
+
 export const authConfig: NextAuthConfig = {
   adapter: DrizzleAdapter(db, {
     usersTable: users,
@@ -75,10 +77,27 @@ export const authConfig: NextAuthConfig = {
 
       return false;
     },
-    jwt({ token, user }) {
+    async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
         token.isOwner = (user as typeof user & { isOwner?: boolean }).isOwner ?? false;
+        token.loginAt = Date.now();
+        token.checkedAt = Date.now();
+        return token;
+      }
+
+      // Revalidate against the DB at most every REVALIDATE_MS: a password change
+      // or deactivation must revoke JWTs that were issued earlier.
+      const checkedAt = typeof token.checkedAt === "number" ? token.checkedAt : 0;
+      if (token.id && Date.now() - checkedAt > REVALIDATE_MS) {
+        const row = await db.query.users.findFirst({
+          where: eq(users.id, token.id as string),
+          columns: { isActive: true, sessionsValidAfter: true },
+        });
+        const loginAt = typeof token.loginAt === "number" ? token.loginAt : 0;
+        if (!row || !row.isActive) return null;
+        if (row.sessionsValidAfter && loginAt < row.sessionsValidAfter.getTime()) return null;
+        token.checkedAt = Date.now();
       }
       return token;
     },

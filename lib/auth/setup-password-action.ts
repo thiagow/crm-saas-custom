@@ -36,7 +36,7 @@ export async function setupPasswordAction(formData: FormData): Promise<void> {
     if (existing) {
       await db
         .update(users)
-        .set({ passwordHash, updatedAt: now })
+        .set({ passwordHash, sessionsValidAfter: now, updatedAt: now })
         .where(eq(users.id, existing.id));
     } else {
       await db.insert(users).values({

@@ -15,6 +15,8 @@ export const users = pgTable("users", {
   isOwner: boolean("is_owner").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   passwordHash: text("password_hash"),
+  // JWTs issued before this instant are rejected (set when the password changes)
+  sessionsValidAfter: timestamp("sessions_valid_after", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
