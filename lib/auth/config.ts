@@ -1,5 +1,6 @@
 import { accounts, authAuditLog, invites, projectMembers, sessions, users, verificationTokens } from "@/db/schema";
 import { db } from "@/lib/db/client";
+import { authEdgeConfig } from "@/lib/auth/config.edge";
 import { verifyPassword } from "@/lib/auth/password";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { and, eq, gt, isNull } from "drizzle-orm";
@@ -9,16 +10,13 @@ import Credentials from "next-auth/providers/credentials";
 const REVALIDATE_MS = 30_000;
 
 export const authConfig: NextAuthConfig = {
+  ...authEdgeConfig,
   adapter: DrizzleAdapter(db, {
     usersTable: users,
     accountsTable: accounts,
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
   }),
-  session: {
-    strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  },
   providers: [
     Credentials({
       credentials: {
@@ -55,10 +53,6 @@ export const authConfig: NextAuthConfig = {
       },
     }),
   ],
-  pages: {
-    signIn: "/login",
-    error: "/login",
-  },
   callbacks: {
     async signIn({ user }) {
       if (!user.email) return false;
@@ -90,10 +84,18 @@ export const authConfig: NextAuthConfig = {
       // or deactivation must revoke JWTs that were issued earlier.
       const checkedAt = typeof token.checkedAt === "number" ? token.checkedAt : 0;
       if (token.id && Date.now() - checkedAt > REVALIDATE_MS) {
-        const row = await db.query.users.findFirst({
-          where: eq(users.id, token.id as string),
-          columns: { isActive: true, sessionsValidAfter: true },
-        });
+        let row: { isActive: boolean; sessionsValidAfter: Date | null } | undefined;
+        try {
+          row = await db.query.users.findFirst({
+            where: eq(users.id, token.id as string),
+            columns: { isActive: true, sessionsValidAfter: true },
+          });
+        } catch (error) {
+          // A transient DB failure must not log the user out (it surfaced as a redirect
+          // to /login on server actions). Keep the token and retry on the next window.
+          console.error("auth jwt: revalidation skipped, database unreachable", error);
+          return token;
+        }
         const loginAt = typeof token.loginAt === "number" ? token.loginAt : 0;
         if (!row || !row.isActive) return null;
         if (row.sessionsValidAfter && loginAt < row.sessionsValidAfter.getTime()) return null;
@@ -101,15 +103,7 @@ export const authConfig: NextAuthConfig = {
       }
       return token;
     },
-    session({ session, token }) {
-      if (token.id) {
-        session.user.id = token.id as string;
-      }
-      if (typeof token.isOwner === "boolean") {
-        (session.user as typeof session.user & { isOwner: boolean }).isOwner = token.isOwner;
-      }
-      return session;
-    },
+    session: authEdgeConfig.callbacks.session,
   },
   events: {
     async signIn({ user }) {
@@ -163,5 +157,4 @@ export const authConfig: NextAuthConfig = {
       });
     },
   },
-  trustHost: true,
 };

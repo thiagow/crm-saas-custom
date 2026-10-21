@@ -34,6 +34,15 @@ const ACTIVITY_ICONS: Record<ActivityType, string> = {
   meeting: "🤝",
 };
 
+/** Prefers the URL captured at extraction; falls back to the Places id. Only https links are rendered. */
+function resolveMapsUrl(lead: Pick<Lead, "googleMapsUrl" | "placeId">): string | null {
+  if (lead.googleMapsUrl?.startsWith("https://")) return lead.googleMapsUrl;
+  if (lead.placeId) {
+    return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(lead.placeId)}`;
+  }
+  return null;
+}
+
 interface LeadDrawerProps {
   lead: Lead;
   projectSlug: string;
@@ -79,6 +88,7 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
         setDetails(updated);
         toast.success("Atividade registrada");
       } catch {
+        setContent((current) => current || submittedContent);
         toast.error("Erro ao registrar atividade");
       }
     });
@@ -107,6 +117,8 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
     window.open(url, "_blank", "noopener,noreferrer");
     setShowWhatsAppModal(false);
   }
+
+  const mapsUrl = resolveMapsUrl(lead);
 
   return (
     <>
@@ -277,6 +289,26 @@ export function LeadDrawer({ lead, projectSlug, onClose }: LeadDrawerProps) {
               <a href={`https://instagram.com/${lead.instagramHandle}`} target="_blank" rel="noopener noreferrer" className="text-sm text-zinc-300 hover:text-indigo-400 transition-colors">
                 @{lead.instagramHandle}
               </a>
+            </div>
+          )}
+          {mapsUrl && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-zinc-600 mb-0.5">Google Maps</p>
+              <a
+                href={mapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-zinc-300 hover:text-indigo-400 transition-colors"
+              >
+                <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 21s-7-5.686-7-11a7 7 0 1114 0c0 5.314-7 11-7 11z" />
+                  <circle cx="12" cy="10" r="2.5" strokeWidth={1.75} />
+                </svg>
+                Ver no Google Maps
+              </a>
+              {lead.gbpStatus === "unclaimed" && (
+                <p className="mt-0.5 text-[11px] text-amber-500/80">Perfil não reivindicado</p>
+              )}
             </div>
           )}
           {lead.city && (

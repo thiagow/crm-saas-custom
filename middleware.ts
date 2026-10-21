@@ -1,6 +1,9 @@
-import { auth } from "@/lib/auth";
-import type { NextAuthRequest } from "next-auth";
+import { authEdgeConfig } from "@/lib/auth/config.edge";
+import NextAuth, { type NextAuthRequest } from "next-auth";
 import { NextResponse } from "next/server";
+
+// Edge-only instance: verifies the JWT signature, never touches the database.
+const { auth } = NextAuth(authEdgeConfig);
 
 /**
  * Route protection middleware using Auth.js v5.
