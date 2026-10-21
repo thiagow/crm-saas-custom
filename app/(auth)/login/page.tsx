@@ -1,4 +1,5 @@
 import { auth, signIn } from "@/lib/auth";
+import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 
 export default async function LoginPage({
@@ -68,7 +69,19 @@ export default async function LoginPage({
             "use server";
             const email = formData.get("email") as string;
             const password = formData.get("password") as string;
-            await signIn("credentials", { email, password, redirectTo: callbackUrl });
+            try {
+              await signIn("credentials", { email, password, redirectTo: callbackUrl });
+            } catch (error) {
+              // Auth.js throws on failed credentials; without this the action surfaces as a 500.
+              // Successful sign-in also throws (NEXT_REDIRECT), which must propagate.
+              if (error instanceof AuthError) {
+                const code = error.type === "CredentialsSignin" ? "CredentialsSignin" : "Default";
+                const query = new URLSearchParams({ error: code, email });
+                if (callbackUrl !== "/") query.set("callbackUrl", callbackUrl);
+                redirect(`/login?${query.toString()}`);
+              }
+              throw error;
+            }
           }}
         >
           <div>
